@@ -36,8 +36,8 @@ selenium = ["selenium>=4.10"]
 novel-dl = "novel_dl.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/<your-name>/novel-dl"
-Issues = "https://github.com/<your-name>/novel-dl/issues"
+Homepage = "https://github.com/lai-888/novel-dl"
+Issues = "https://github.com/lai-888/novel-dl/issues"
 
 [tool.setuptools]
 packages = ["novel_dl"]

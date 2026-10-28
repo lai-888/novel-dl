@@ -21,7 +21,7 @@
 ## 安装
 
 ```bash
-git clone https://github.com/<你的用户名>/novel-dl.git
+git clone https://github.com/lai-888/novel-dl.git
 cd novel-dl
 pip install -e .
 ```
