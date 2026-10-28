@@ -1,0 +1,25 @@
+# 下载产物与本地状态
+books/
+logs/
+tests/.tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# 个人规则文件：别把你在用的站点规则提交上来
+sites.json
+novel-dl.toml
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

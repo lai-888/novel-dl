@@ -1,0 +1,13 @@
+[
+  {
+    "_comment": "这是一条示例规则，host 是保留域名，不会命中真实站点。复制到 sites.json 后改成你要用的站。",
+    "host": "example.com",
+    "name": "示例站",
+    "url": "https://example.com/",
+    "toc_item": "dl.list dd a",
+    "ch_title": "h1.title",
+    "ch_content": "#content",
+    "filter_tag": "script, style, .ad",
+    "filter_txt": "请记住本站域名|手机用户请浏览|本章未完，请点击下一页"
+  }
+]

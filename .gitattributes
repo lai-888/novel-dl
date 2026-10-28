@@ -1,0 +1,7 @@
+# Windows 换行符统一按原样保存，避免整仓库被 CRLF 改写
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.bat text eol=crlf
