@@ -1,143 +1,139 @@
 # 上传到 GitHub 的完整步骤
 
-仓库已经在 `C:\Users\31383\Desktop\novel-dl` 初始化好，首次提交也做完了。
-下面从「还没建远程仓库」开始。
+仓库已经在 `C:\Users\31383\Desktop\novel-dl` 初始化好，两次提交也都做完了。
+作者身份已配置为 `lai-888 <3138358994@qq.com>`（你 GitHub 账号上已验证的那个邮箱）。
+
+**只剩两步：网页建空仓库 → 推送。**
 
 ---
 
-## 0. 先确认本机状态（30 秒）
-
-本机实际情况：
+## 0. 本机状态（已确认）
 
 | 工具 | 状态 |
 |---|---|
-| git | ✅ `C:\Program Files\Git\bin\git.exe`（2.55） |
-| gh（GitHub CLI） | ❌ 未安装 |
-| git 全局身份 | ❌ 未配置（`user.name` / `user.email` 都是空） |
-| python | ✅ `C:\Python314\python.exe` |
+| git | ✅ 2.55，`C:\Program Files\Git\bin\git.exe` |
+| gh（GitHub CLI） | ❌ 未安装（可选，装了能省事） |
+| git 本地身份 | ✅ `lai-888` / `3138358994@qq.com`（配置在仓库内，不是全局） |
+| python | ✅ 3.14，`C:\Python314\python.exe` |
+| GitHub 账号 | `lai-888`，验证邮箱 `3138358994@qq.com` |
+
+> 另一个邮箱 `zhengkailai92@gmail.com` 在 GitHub 上是 **Unverified**，
+> 不要用它做提交邮箱，否则 GitHub 不会把提交归到你名下。
 
 ---
 
-## 1. 配置 git 身份（只需一次）
-
-```bash
-git config --global user.name  "你的名字"
-git config --global user.email "你的GitHub邮箱"
-```
-
-> 为什么重要：提交记录里的作者信息来自这里。想让 GitHub 把提交算到你头上，
-> 邮箱必须是你 GitHub 账号里验证过的那个（或 `@users.noreply.github.com` 形式）。
-
----
-
-## 2. 在 GitHub 网页建空仓库
+## 1. 在 GitHub 网页建空仓库
 
 1. 打开 https://github.com/new
-2. Repository name 填 `novel-dl`
+2. **Repository name** 填 `novel-dl`
 3. 选 **Public**
-4. **不要**勾 "Add a README file" / ".gitignore" / "license"——本地已经有了，勾了会冲突
-5. 点 Create repository
+4. **千万不要**勾下面三个（本地已有，勾了会冲突，推送会被拒）：
 
-建完页面会显示远程地址，形如：
+   - ❌ Add a README file
+   - ❌ Add .gitignore
+   - ❌ Choose a license
+
+5. 点 **Create repository**
+
+建完会跳到仓库页，上面显示远程地址：
 
 ```
-https://github.com/<你的用户名>/novel-dl.git
+https://github.com/lai-888/novel-dl.git
 ```
 
 ---
 
-## 3. 关联远程并推送
+## 2. 推送
 
-在本机执行（把 URL 换成你自己的）：
+在本机执行：
 
 ```bash
 cd C:\Users\31383\Desktop\novel-dl
-git remote add origin https://github.com/<你的用户名>/novel-dl.git
+git remote add origin https://github.com/lai-888/novel-dl.git
 git push -u origin main
 ```
 
-`-u` 的作用：把这个远程设为默认，以后直接 `git push` 就行。
+`-u` 把 origin/main 设为默认上游，以后直接 `git push` 就够了。
 
-**首次推送会弹窗要认证。** GitHub 早就不能用账号密码了，两个选择：
+### 首次推送会要求认证
 
-- **浏览器授权（最简单）**：装 Git Credential Manager 的话，会弹浏览器让你登录 GitHub，点授权即可。Git for Windows 2.55 自带 GCM，正常都能弹出来。
-- **Personal Access Token**：GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token，勾 `repo` 权限。密码框粘贴这个 token。
+GitHub 早就不接受账号密码了。两个选择：
+
+**A. 浏览器授权（最简单）**
+Git for Windows 自带 Git Credential Manager，正常会弹窗让你登录 GitHub，点授权即可。
+（如果弹的是命令行要账号密码，说明 GCM 没生效，改用 B。）
+
+**B. Personal Access Token**
+1. GitHub → 右上头像 → Settings → Developer settings
+2. Personal access tokens → **Tokens (classic)** → Generate new token (classic)
+3. 勾 `repo` 权限
+4. 生成的 token 当密码用：用户名填 `lai-888`，密码粘贴 token
+
+> token 只显示一次，记得先复制。它等同于密码，别提交到仓库里。
 
 ---
 
-## 4. 验证
+## 3. 验证
 
 ```bash
-git remote -v          # 看远程地址对不对
-git log --oneline      # 看提交在不在
-git status             # 应该是 clean
+git remote -v          # 远程地址应为 https://github.com/lai-888/novel-dl.git
+git log --oneline      # 两条提交，作者都是 lai-888
+git status             # 应为 clean
 ```
 
-然后刷新 GitHub 页面，应该能看到 21 个文件和你的提交记录。
+刷新 GitHub 页面，应能看到 23 个文件和两条提交记录。
+点提交记录里的 `lai-888`，能看到头像和账号链接 —— 说明归属正确。
 
 ---
 
-## 5. 推送前建议再改两处
+## 4. 以后怎么更新
 
-### 5.1 把 `<your-name>` 换成你的用户名
-
-`pyproject.toml` 里有占位符：
-
-```toml
-[project.urls]
-Homepage = "https://github.com/<your-name>/novel-dl"
-Issues   = "https://github.com/<your-name>/novel-dl/issues"
-```
-
-README 和 CONTRIBUTING 里的 `git clone` 示例同理。改完再提交：
+日常三步：
 
 ```bash
 git add -A
-git commit -m "docs: 填入仓库地址"
-```
-
-### 5.2 确认没有个人内容混进去
-
-```bash
-git ls-files
-```
-
-应该只有这 21 项，**不应该**出现 `books/`、`logs/`、`sites.json`、`test_out/`。
-这些 `.gitignore` 都挡住了——但养成推送前看一眼的习惯。
-
----
-
-## 关于「以后怎么更新」
-
-日常流程就三步：
-
-```bash
-git add -A                        # 或 git add 具体文件
 git commit -m "feat: 做了什么"
 git push
 ```
 
-想改最后一次提交（比如提交信息写错、漏了文件）：
+改最后一次提交（漏文件 / 提交信息写错）：
 
 ```bash
 git add 忘记的文件
-git commit --amend                # 合并进上一次提交
-git push --force-with-lease       # 已经推过才需要（只在自己一个人用的分支上这么做）
+git commit --amend --no-edit
+git push --force-with-lease     # 已经推过才需要
 ```
+
+`--force-with-lease` 比 `--force` 安全：远程有别人的新提交时会拒绝覆盖。
+本项目只有你在推，基本用不上，先记住别用裸 `--force`。
 
 ---
 
-## 可选：装 GitHub CLI 会省很多事
+## 5. 可选：装 GitHub CLI 会省很多事
 
 ```bash
 winget install --id GitHub.cli
 gh auth login
 ```
 
-之后建仓库、推送、开 PR 都能一条命令搞定：
+之后这一条就顶掉上面第 1、2 步的全部内容：
 
 ```bash
+cd C:\Users\31383\Desktop\novel-dl
 gh repo create novel-dl --public --source=. --push
 ```
 
-这一条就等于上面第 2、3 步的全部内容。
+---
+
+## 附：这次推送前做过的事（备查）
+
+- 已从发布版**移除** `novel_dl/sites.json`（原本内置 12 个盗版小说站规则）
+- 已剔除 `books/`（987 个文件 / 21.4 MB 成品小说）、`logs/`、`__pycache__/`
+- 已剔除 `tests/patch_*.py` 等 20 个会改写源码的一次性脚本
+- `.gitignore` 已挡住 `sites.json`、`novel-dl.toml`、`books/`、`logs/`
+
+推送前可以随时自查：
+
+```bash
+git ls-files    # 只应有 23 项，不含 books/ logs/ sites.json
+```
