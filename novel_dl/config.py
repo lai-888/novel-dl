@@ -19,8 +19,10 @@ import tomllib
 DEFAULTS = {
     "output_dir": "books",
     "driver": "requests",
-    "delay": 0.5,
-    "workers": 1,
+    # 保守默认：2 线程 + 1 秒间隔。这个组合对绝大多数站点都不会触发限流。
+    # 想要更快可以自己调大 workers / 调小 delay，但要承担被封 IP 的风险。
+    "delay": 1.0,
+    "workers": 2,
     "rules_files": [],
     "max_pages": 200,
     "timeout": 45,

@@ -10,6 +10,7 @@
 """
 import inspect
 import random
+import threading
 import time
 
 import requests
@@ -47,6 +48,31 @@ class BaseFetcher:
     # —— 外部控制（网页暂停/停止按钮注入）——
     stop_event = None
     pause_event = None
+
+    def __init__(self):
+        # 全局限速：所有线程共享同一个「上次请求时刻」。
+        # 只在每个线程里 sleep 是不够的 —— 4 个线程各自等待，实际速率仍是
+        # 4 倍。必须有一个跨线程的节流点，才能保证真正的请求频率。
+        # 注意：节流点在 BaseFetcher.pace() 里，由**引擎**统一调用；
+        # 不放在 fetch() 内部，是为了让第三方 fetcher 也无法绕过它。
+        self._pace_lock = threading.Lock()
+        self._last_request = 0.0
+        self.min_interval = 0.0        # 由引擎按 --delay 设置
+
+    def pace(self):
+        """把「相邻两次请求的最小间隔」落实到所有线程上。
+
+        引擎在每次调用 fetch 之前调用本方法。写在引擎侧的好处：
+        即使 fetcher 子类重写了 fetch，也不会绕过限速。
+        """
+        if self.min_interval <= 0:
+            return
+        with self._pace_lock:
+            now = time.monotonic()
+            wait = self._last_request + self.min_interval - now
+            if wait > 0:
+                self.gate_wait(wait)
+            self._last_request = time.monotonic()
 
     def gate_wait(self, seconds: float):
         """等待 seconds 秒，期间实时响应暂停/停止。

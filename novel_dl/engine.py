@@ -28,7 +28,8 @@ class Engine:
     def __init__(self, book_url: str, driver="requests", out_dir="books",
                  from_ch=None, to_ch=None, min_delay=None,
                  backup_url=None, stop_event=None, pause_event=None,
-                 max_toc_pages=200, workers=1, auto_detect=True):
+                 max_toc_pages=200, workers=1, auto_detect=True,
+                 on_toc=None):
         book_url = (book_url or "").strip()
         if not book_url:
             raise SystemExit("没有提供小说目录页网址")
@@ -42,12 +43,18 @@ class Engine:
         if min_delay is not None:
             self.fetcher.MIN_DELAY = min_delay
             self.fetcher.MAX_DELAY = max(min_delay * 3, min_delay)
+        # 跨线程限速：并发时也保证请求之间的最小间隔。
+        # 不设这个的话，4 线程等于把频率放大 4 倍，很容易被站点封。
+        self.fetcher.min_interval = max(0.0, float(min_delay or 0))
         self.parser = get_parser(book_url, fetcher=self.fetcher,
                                  lazy_auto=auto_detect)
         self.prog = Progress(out_dir, book_url)
         self.from_ch, self.to_ch = from_ch, to_ch
         self.max_toc_pages = max_toc_pages
         self.workers = max(1, int(workers or 1))
+        # 目录解析完成后回调 (书名, 章节总数)。webui 靠它显示「共 N 章」，
+        # 否则在网络慢/全部已下载的情况下总数会一直停在 0。
+        self.on_toc = on_toc
         self.backup_url = (backup_url or "").strip() or None
         self.backup_toc = None
         self.stop_event = stop_event
@@ -92,14 +99,14 @@ class Engine:
     # ---------- 目录 ----------
     def refresh_toc(self) -> tuple[str, list]:
         try:
-            html = self.fetcher.fetch(self.book_url)
+            html = self._get(self.book_url)
         except Exception as e:
             if not self.backup_url:
                 raise
             log.warning("主站目录抓取失败（%s），改用备用网址：%s", e, self.backup_url)
             self.book_url = self.backup_url
             self.backup_url = None
-            html = self.fetcher.fetch(self.book_url)
+            html = self._get(self.book_url)
 
         title, toc = self.parser.parse_toc(html, self.book_url)
         toc = self._extend_toc_pages(toc, html)
@@ -134,7 +141,7 @@ class Engine:
             while nxt and nxt not in seen and len(pages) < self.max_toc_pages:
                 pages.append(nxt)
                 try:
-                    html = self.fetcher.fetch(nxt)
+                    html = self._get(nxt)
                 except Exception as e:
                     log.warning("目录翻页失败（%s），使用已获取部分", e)
                     break
@@ -142,7 +149,7 @@ class Engine:
 
         for nxt in pages[: self.max_toc_pages]:
             try:
-                html2 = self.fetcher.fetch(nxt)
+                html2 = self._get(nxt)
                 _, more = self.parser.parse_toc(html2, nxt)
             except Exception as e:
                 log.warning("目录第 %d 页抓取失败（%s），使用已获取部分", page_no, e)
@@ -176,7 +183,7 @@ class Engine:
     def _load_backup_toc(self, main_toc: list):
         """备用网址（镜像站）：尽力而为，失败不影响主流程。"""
         try:
-            html = self.fetcher.fetch(self.backup_url)
+            html = self._get(self.backup_url)
             _, btoc = self.parser.parse_toc(html, self.backup_url)
         except Exception as e:
             log.warning("备用站点目录加载失败（%s），仅使用主站", e)
@@ -279,6 +286,16 @@ class Engine:
         p.recover_from_disk()
         targets = [i for i in range(lo, hi) if not p.is_done(i)]
 
+        # 目录已确定 —— 立刻把总数报给上层。
+        # 不等 mark_done：全部章节都已下载时不会再有 mark_done 调用，
+        # 界面上的总数就会一直是 0（「显示共 0 章却下了很多章」的成因）。
+        if self.on_toc is not None:
+            try:
+                self.on_toc(title, len(toc), len(p.state.get("done", [])),
+                            len(targets))
+            except Exception as e:
+                log.warning("进度回调失败（不影响下载）：%s", e)
+
         try:
             done_now, dead = self._download_loop(toc, targets)
         except KeyboardInterrupt:
@@ -293,9 +310,44 @@ class Engine:
         log.info("\n本轮新下载 %d 章。%s", done_now, p.summary())
         if dead:
             log.info("☠ 本轮阵亡名单：")
-            for no, t, why in dead:
+            for no, t, why in dead[:20]:
                 log.info("   第%d章 %s: %s", no, t, why)
+            if len(dead) > 20:
+                log.info("   … 其余 %d 章见 state.json", len(dead) - 20)
+            self._explain_failures(dead, len(toc))
         return self.export(title, toc)
+
+    def _explain_failures(self, dead, total):
+        """失败时给出可执行的原因判断，而不是只说「失败」。
+
+        最常见的是被站点限流/封禁，用户看到「全失败」却不知道该怎么办。
+        """
+        if not dead or total <= 0:
+            return
+        ratio = len(dead) / total
+        reasons = " ".join(str(d[2]) for d in dead[:10]).lower()
+        banned_hint = any(k in reasons for k in
+                          ("reset", "10054", "connection", "timed out",
+                           "403", "429", "forbidden", "too many"))
+        if ratio >= 0.5 and banned_hint:
+            log.error("")
+            log.error("⚠ 大部分章节都失败了，很可能被该网站限流或临时封禁。")
+            log.error("   建议：把并发降到 1、把每章间隔调大，并等十几分钟再试。")
+            log.error("   命令示例：novel-dl <同样的网址> -w 1 --delay 3")
+            log.error("   已下载的章节不会丢，恢复后重跑只补缺的部分。")
+        elif ratio >= 0.5:
+            log.error("")
+            log.error("⚠ 多个章节解析失败。可能是网站改版或需要专用解析器。")
+            log.error("   可以试试：novel-dl <网址> --driver selenium")
+
+    def _get(self, url: str, quick: bool = False) -> str:
+        """统一抓取入口：先限速，再抓。
+
+        所有网络请求都必须经过这里 —— 限速点集中在引擎侧，
+        任何 fetcher 实现（包括第三方插件）都无法绕过。
+        """
+        self.fetcher.pace()
+        return self.fetcher.fetch_compat(url, quick=quick)
 
     def _fetch_chapter(self, i, toc, quick=False):
         """抓取并解析单章。纯函数式：不改任何共享状态，供并发调用。
@@ -307,14 +359,14 @@ class Engine:
         """
         chap_title, url = toc[i]
         try:
-            html = self.fetcher.fetch_compat(url, quick=quick)
+            html = self._get(url, quick=quick)
         except Exception as e_primary:
             b_url = self._backup_url_for(i, chap_title)
             if not b_url:
                 raise
             log.info("    ↪ 主站失败（%s），改用备站：%s",
                      str(e_primary)[:60], b_url)
-            html = self.fetcher.fetch_compat(b_url, quick=quick)
+            html = self._get(b_url, quick=quick)
             url = b_url
 
         c_title, body = self.parser.parse_chapter(html)
@@ -327,7 +379,7 @@ class Engine:
                 break
             pages += 1
             page_url = nxt[0]
-            html = self.fetcher.fetch(page_url)
+            html = self._get(page_url)
             _, body2 = self.parser.parse_chapter(html)
             body += "\n" + body2
         return f"{c_title}\n\n{body}", c_title
@@ -403,6 +455,7 @@ class Engine:
         log.info("⚡ 并发抓取：%d 线程，窗口 %d", self.workers, window)
 
         retry = []
+        last_error = {}          # 每章最后一次的真实异常，用于最终记账
 
         def run_batch(indices, quick):
             """跑一批。成功的直接落盘，失败的根据 quick 决定进 retry 还是记死。"""
@@ -422,6 +475,7 @@ class Engine:
                             text, c_title = fut.result()
                             self._record_success(i, text, c_title, toc, stats)
                         except Exception as e:
+                            last_error[i] = e
                             if quick:
                                 # 阶段 1：先记账但不判死，留给阶段 2 重试
                                 retry.append(i)
@@ -467,9 +521,12 @@ class Engine:
                 batch, retry[:] = list(retry), []
                 if run_batch(batch, quick=True) != "ok":
                     break
-            # 还没成功的，如实记账
+            # 还没成功的，如实记账。
+            # 原因要保留最后一次的真实异常 —— 只写「重试后仍失败」会让
+            # 用户（和开发者）完全不知道是 403、超时还是解析失败。
             for i in retry:
-                self._record_failure(i, toc, "重试后仍失败", dead, stats)
+                reason = last_error.get(i) or "重试后仍失败"
+                self._record_failure(i, toc, reason, dead, stats)
 
         if status == "circuit_break":
             log.error("\n⛔ 连续 5 章连接失败，判定站点/线路暂时不可达，自动停止。")

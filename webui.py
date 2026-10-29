@@ -128,14 +128,30 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                          backup_url=backup_url, failed=[],
                          result_txt=None, started_at=time.time(),
                          finished_at=None, done=0, total=0,
-                         out_dir=target_dir,
+                         title=None, skipped=0, out_dir=target_dir,
                          message="正在读取章节列表…")
+
+        def on_toc(title, total, already_done, to_fetch):
+            """目录确定后立刻上报总数 —— 别等 mark_done，否则可能永远是 0。"""
+            with STATE_LOCK:
+                STATE["title"] = title
+                STATE["total"] = total
+                STATE["done"] = already_done
+                STATE["skipped"] = already_done
+                if to_fetch == 0:
+                    STATE["message"] = f"《{title}》共 {total} 章，已全部下载过，无需再下"
+                elif already_done:
+                    STATE["message"] = (f"《{title}》共 {total} 章，"
+                                        f"已有 {already_done} 章，本次补 {to_fetch} 章")
+                else:
+                    STATE["message"] = f"《{title}》共 {total} 章，开始下载"
+
         try:
             eng = Engine(url, driver=driver, out_dir=target_dir,
                          from_ch=from_ch, to_ch=to_ch, min_delay=delay,
                          backup_url=backup_url,
                          stop_event=stop_event, pause_event=pause_event,
-                         workers=workers)
+                         workers=workers, on_toc=on_toc)
 
             prog = eng.prog
             orig_done, orig_fail = prog.mark_done, prog.mark_failed
@@ -143,8 +159,8 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
             def md(idx):
                 orig_done(idx)
                 with STATE_LOCK:
+                    # total 由 on_toc 定下，这里只推进 done，避免两者互相覆盖
                     STATE["done"] = len(prog.state["done"])
-                    STATE["total"] = max(STATE["total"], len(prog.state["toc"]))
 
             def mf(idx, reason):
                 orig_fail(idx, reason)
@@ -155,15 +171,18 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
 
             prog.mark_done, prog.mark_failed = md, mf
 
-            with STATE_LOCK:
-                STATE["total"] = len(prog.state.get("toc", [])) or STATE["total"]
-                STATE["done"] = len(prog.state["done"])
-
             txt = eng.run()
             with STATE_LOCK:
                 STATE["result_txt"] = txt
-                title = eng.prog.state.get("title") or "小说"
-                STATE["message"] = f"下载完成，共 {STATE['done']} 章 —— {title}"
+                title = STATE.get("title") or eng.prog.state.get("title") or "小说"
+                total = STATE["total"] or len(eng.prog.state.get("toc", []))
+                done = len(eng.prog.state["done"])
+                STATE["done"] = done
+                STATE["total"] = total
+                if total:
+                    STATE["message"] = f"下载完成：《{title}》共 {total} 章"
+                else:
+                    STATE["message"] = f"下载完成：《{title}》"
         except (SystemExit, KeyboardInterrupt) as e:
             log(f"任务已停止：{e}")
             with STATE_LOCK:
@@ -407,12 +426,12 @@ PAGE = """<!doctype html>
     <div>
       <label class="lbl" for="workers">同时下载</label>
       <input class="bare" id="workers" type="number" min="1" max="16"
-             step="1" value="4" inputmode="numeric">
+             step="1" value="2" inputmode="numeric">
     </div>
     <div>
-      <label class="lbl" for="delay">每章间隔</label>
+      <label class="lbl" for="delay">每章间隔（秒）</label>
       <input class="bare" id="delay" type="number" min="0" step="0.5"
-             value="0.5" inputmode="decimal">
+             value="1" inputmode="decimal">
     </div>
     <div class="full">
       <label class="lbl" for="d">网站类型</label>
@@ -511,7 +530,7 @@ $('go').onclick=async()=>{
     to:$('t').value?parseInt($('t').value):null,
     driver:$('d').value,
     delay:$('delay').value?parseFloat($('delay').value):0,
-    workers:$('workers').value?parseInt($('workers').value):4,
+    workers:$('workers').value?parseInt($('workers').value):2,
     outdir:$('outdir').value.trim()
   };
   $('stage').classList.add('on');
