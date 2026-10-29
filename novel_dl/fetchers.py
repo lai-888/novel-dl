@@ -64,7 +64,15 @@ class BaseFetcher:
 
         引擎在每次调用 fetch 之前调用本方法。写在引擎侧的好处：
         即使 fetcher 子类重写了 fetch，也不会绕过限速。
+
+        容错：第三方 fetcher 若没调用 super().__init__()，
+        这里惰性补上节流状态，而不是抛 AttributeError。
         """
+        if getattr(self, "_pace_lock", None) is None:
+            self._pace_lock = threading.Lock()
+            self._last_request = 0.0
+            if not hasattr(self, "min_interval"):
+                self.min_interval = 0.0
         if self.min_interval <= 0:
             return
         with self._pace_lock:

@@ -97,6 +97,51 @@ class Engine:
                 log.info("▶ 已继续")
 
     # ---------- 目录 ----------
+    def _try_github_pages(self):
+        """如果是 GitHub 仓库型站点，就地下载并返回结果；否则返回 None。
+
+        先看 URL 是否是 *.github.io —— 只有这类才值得为检测多抓一次页面。
+        普通站点直接返回 None，不产生任何额外请求。
+        """
+        # 注意：必须只取到第一个斜杠为止，否则路径会混进 host
+        m = re.match(r"https?://([^/:]+)", self.book_url or "")
+        host = m.group(1).lower() if m else ""
+        is_pages_host = host.endswith(".github.io") or host == "github.io"
+        if not is_pages_host:
+            return None
+
+        try:
+            html = self._get(self.book_url)
+        except Exception:
+            return None
+
+        from .githubpages import detect_github_pages
+        info = detect_github_pages(html, self.book_url)
+        if not info:
+            return None
+
+        log.info("检测到 GitHub 仓库型站点，改用专用流程")
+        from .ghpages_dl import download as gh_download
+
+        def on_toc_cb(book, total, already, to_fetch):
+            if self.on_toc is not None:
+                try:
+                    self.on_toc(book, total, already, to_fetch)
+                except Exception:
+                    pass
+
+        paths = gh_download(
+            self.book_url,
+            out_dir=os.path.dirname(os.path.dirname(self.prog.state_path)),
+            fetcher_headers=self.fetcher.session.headers
+            if hasattr(self.fetcher, "session") else None,
+            stop_event=self.stop_event,
+            pause_event=self.pause_event,
+            on_toc=on_toc_cb,
+        )
+        # 返回值统一是 TXT 路径；多本时给第一个
+        return paths[0] if paths else ""
+
     def refresh_toc(self) -> tuple[str, list]:
         try:
             html = self._get(self.book_url)
@@ -264,6 +309,13 @@ class Engine:
         resuming = bool(p.state["done"])
         if resuming:
             log.info("📖 发现历史进度 —— %s", p.summary())
+
+        # —— 先判断是不是 GitHub 仓库型站点 ——
+        # 这类站点的页面上没有任何章节链接，正文也不在 HTML 里，
+        # 走通用流程必然失败，所以要在解析目录之前分流。
+        gh = self._try_github_pages()
+        if gh is not None:
+            return gh
 
         title, toc = self.refresh_toc()
         if resuming:
