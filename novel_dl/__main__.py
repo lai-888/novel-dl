@@ -42,6 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("-o", "--out", default=None, help="输出目录（默认 ./books）")
     ap.add_argument("--delay", type=float, default=None,
                     help="每章最小间隔秒数，被限速时调大（如 3）")
+    ap.add_argument("-w", "--workers", type=int, default=None, metavar="N",
+                    help="并发抓取线程数（默认 1=串行）。4~8 通常最合适；"
+                         "站点限流时调小")
     ap.add_argument("--backup", default=None, metavar="URL",
                     help="备用网址（镜像站），主站某章失败时自动改用")
     ap.add_argument("--rules", default=None, metavar="FILE",
@@ -76,6 +79,7 @@ def main(argv=None):
         min_delay=args.delay if args.delay is not None else cfg["delay"],
         backup_url=args.backup,
         max_toc_pages=cfg["max_pages"],
+        workers=args.workers if args.workers is not None else cfg["workers"],
     )
     engine.run()
 

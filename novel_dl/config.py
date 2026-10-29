@@ -10,6 +10,7 @@
     output_dir  = "books"
     driver      = "requests"
     delay       = 0.5
+    workers     = 4
     rules_files = ["my-sites.json"]
 """
 import os
@@ -19,6 +20,7 @@ DEFAULTS = {
     "output_dir": "books",
     "driver": "requests",
     "delay": 0.5,
+    "workers": 1,
     "rules_files": [],
     "max_pages": 200,
     "timeout": 45,

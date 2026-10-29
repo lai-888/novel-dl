@@ -28,7 +28,7 @@ class Engine:
     def __init__(self, book_url: str, driver="requests", out_dir="books",
                  from_ch=None, to_ch=None, min_delay=None,
                  backup_url=None, stop_event=None, pause_event=None,
-                 max_toc_pages=200):
+                 max_toc_pages=200, workers=1):
         book_url = (book_url or "").strip()
         if not book_url:
             raise SystemExit("没有提供小说目录页网址")
@@ -46,6 +46,7 @@ class Engine:
         self.prog = Progress(out_dir, book_url)
         self.from_ch, self.to_ch = from_ch, to_ch
         self.max_toc_pages = max_toc_pages
+        self.workers = max(1, int(workers or 1))
         self.backup_url = (backup_url or "").strip() or None
         self.backup_toc = None
         self.stop_event = stop_event
@@ -271,6 +272,10 @@ class Engine:
 
         lo = (self.from_ch - 1) if self.from_ch else 0
         hi = min(self.to_ch, len(toc)) if self.to_ch else len(toc)
+
+        # 账本是批量落盘的，断电后可能落后于磁盘：先按缓存文件补齐记录，
+        # 否则会把已经下好的章节再请求一遍。
+        p.recover_from_disk()
         targets = [i for i in range(lo, hi) if not p.is_done(i)]
 
         try:
@@ -281,6 +286,8 @@ class Engine:
         except SystemExit as e:
             log.info("\n⏹ 已停止：%s（进度已保存，重跑同命令可续传）", e)
             done_now, dead = 0, []
+        finally:
+            p.flush()   # 批量落盘模式下的兜底：异常退出也不丢账本
 
         log.info("\n本轮新下载 %d 章。%s", done_now, p.summary())
         if dead:
@@ -289,65 +296,186 @@ class Engine:
                 log.info("   第%d章 %s: %s", no, t, why)
         return self.export(title, toc)
 
+    def _fetch_chapter(self, i, toc, quick=False):
+        """抓取并解析单章。纯函数式：不改任何共享状态，供并发调用。
+
+        quick=True 时只试一次（不重试）：并发模式下由引擎负责安排重试，
+        否则一个失败章会占住一个线程 20 多秒，其它章节干等。
+
+        返回 (正文文本, 章节标题)。失败抛异常，由调用方决定怎么记账。
+        """
+        chap_title, url = toc[i]
+        try:
+            html = self.fetcher.fetch_compat(url, quick=quick)
+        except Exception as e_primary:
+            b_url = self._backup_url_for(i, chap_title)
+            if not b_url:
+                raise
+            log.info("    ↪ 主站失败（%s），改用备站：%s",
+                     str(e_primary)[:60], b_url)
+            html = self.fetcher.fetch_compat(b_url, quick=quick)
+            url = b_url
+
+        c_title, body = self.parser.parse_chapter(html)
+
+        # 章节内分页跟随（/ID、/ID-2、/ID_2 …），上限 30 页
+        page_url, pages = url, 1
+        while pages < 30:
+            nxt = self._next_page_link(html, page_url)
+            if not nxt or not self._is_next_page(page_url, nxt[0]):
+                break
+            pages += 1
+            page_url = nxt[0]
+            html = self.fetcher.fetch(page_url)
+            _, body2 = self.parser.parse_chapter(html)
+            body += "\n" + body2
+        return f"{c_title}\n\n{body}", c_title
+
     def _download_loop(self, toc, targets):
+        """按 workers 并发抓取。
+
+        并发安全的关键：抓取/解析是纯的（不碰共享状态），落盘和记账回到
+        主线程串行做。章节正文每章立刻写盘，账本按批次落盘。
+        """
+        if self.workers <= 1:
+            return self._download_serial(toc, targets)
+        return self._download_parallel(toc, targets)
+
+    def _record_success(self, i, text, c_title, toc, stats):
+        self.prog.write_chapter(i, text)
+        self.prog.mark_done(i)
+        stats["done_now"] += 1
+        stats["conn_fail_streak"] = 0
+        log.info("  ✓ [%d/%d] %s", i + 1, len(toc), c_title)
+
+    def _record_failure(self, i, toc, err, dead, stats):
+        self.prog.mark_failed(i, str(err))
+        dead.append((i + 1, toc[i][0], str(err)))
+        log.warning("  ☠ [%d] %s —— 战术跳过（%s），已记录在案",
+                    i + 1, toc[i][0], str(err)[:80])
+        if any(k in str(err) for k in ("Connection", "timed out", "Reset",
+                                       "Max retries", "SSL", "10054", "10061")):
+            stats["conn_fail_streak"] += 1
+        else:
+            stats["conn_fail_streak"] = 0
+
+    def _download_serial(self, toc, targets):
         p = self.prog
-        done_now, dead = 0, []
-        conn_fail_streak = 0          # 连续连接类失败计数（熔断用）
+        dead, stats = [], {"done_now": 0, "conn_fail_streak": 0}
         last_target = targets[-1] if targets else None
 
         for i in targets:
             self._gate()
-            chap_title, url = toc[i]
             try:
-                try:
-                    html = self.fetcher.fetch(url)
-                except Exception as e_primary:
-                    b_url = self._backup_url_for(i, chap_title)
-                    if not b_url:
-                        raise
-                    log.info("    ↪ 主站失败（%s），改用备站：%s",
-                             str(e_primary)[:60], b_url)
-                    html = self.fetcher.fetch(b_url)
-                    url = b_url
-
-                c_title, body = self.parser.parse_chapter(html)
-
-                # 章节内分页跟随（/ID、/ID-2、/ID_2 …），上限 30 页
-                page_url, pages = url, 1
-                while pages < 30:
-                    nxt = self._next_page_link(html, page_url)
-                    if not nxt or not self._is_next_page(page_url, nxt[0]):
-                        break
-                    pages += 1
-                    page_url = nxt[0]
-                    html = self.fetcher.fetch(page_url)
-                    _, body2 = self.parser.parse_chapter(html)
-                    body += "\n" + body2
-
-                p.write_chapter(i, f"{c_title}\n\n{body}")
-                p.mark_done(i)
-                done_now += 1
-                conn_fail_streak = 0
-                log.info("  ✓ [%d/%d] %s", i + 1, len(toc), c_title)
+                text, c_title = self._fetch_chapter(i, toc)
+                self._record_success(i, text, c_title, toc, stats)
             except Exception as e:
-                p.mark_failed(i, str(e))
-                dead.append((i + 1, chap_title, str(e)))
-                log.warning("  ☠ [%d] %s —— 战术跳过（%s），已记录在案",
-                            i + 1, chap_title, str(e)[:80])
-                if any(k in str(e) for k in ("Connection", "timed out", "Reset",
-                                             "Max retries", "SSL", "10054", "10061")):
-                    conn_fail_streak += 1
-                else:
-                    conn_fail_streak = 0
-                if conn_fail_streak >= 5:
+                self._record_failure(i, toc, e, dead, stats)
+                if stats["conn_fail_streak"] >= 5:
                     log.error("\n⛔ 连续 5 章连接失败，判定站点/线路暂时不可达，自动停止。")
                     log.error("   进度已保存：网络恢复后重跑同一命令即可续传。")
                     break
-
             if (i + 1) % 10 == 0 or i == last_target:
                 log.info("    （进度 %d/%d，可暂停/停止）",
                          len(p.state["done"]), len(toc))
-        return done_now, dead
+                p.flush()
+        return stats["done_now"], dead
+
+    def _download_parallel(self, toc, targets):
+        """并发抓取，串行落盘。
+
+        两阶段设计（这是并发下不被「坏章拖死」的关键）：
+          阶段 1 —— 每题只试一次（quick），失败立即跳过并记入 retry 列表。
+                    这样线程池不会被某个卡住的章节占住 20 秒。
+          阶段 2 —— 所有章节扫完后，对 retry 列表做少量轮次的重试，
+                    轮次之间整体等待，天然带退避。
+
+        用「滑动窗口」而不是一次性提交全部：窗口大小 = workers * 4，
+        既能喂饱线程池，又不会因为几千个任务导致内存膨胀，
+        也保证停止信号能及时生效。
+        """
+        from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
+
+        p = self.prog
+        dead, stats = [], {"done_now": 0, "conn_fail_streak": 0}
+        window = max(self.workers * 4, self.workers)
+        log.info("⚡ 并发抓取：%d 线程，窗口 %d", self.workers, window)
+
+        retry = []
+
+        def run_batch(indices, quick):
+            """跑一批。成功的直接落盘，失败的根据 quick 决定进 retry 还是记死。"""
+            queue = list(indices)
+            finished = 0
+            with ThreadPoolExecutor(max_workers=self.workers) as pool:
+                inflight = {}
+                while queue and len(inflight) < window:
+                    i = queue.pop(0)
+                    inflight[pool.submit(self._fetch_chapter, i, toc, quick)] = i
+
+                while inflight:
+                    done_set, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                    for fut in done_set:
+                        i = inflight.pop(fut)
+                        try:
+                            text, c_title = fut.result()
+                            self._record_success(i, text, c_title, toc, stats)
+                        except Exception as e:
+                            if quick:
+                                # 阶段 1：先记账但不判死，留给阶段 2 重试
+                                retry.append(i)
+                            else:
+                                self._record_failure(i, toc, e, dead, stats)
+                        finished += 1
+
+                        stopping = (self.stop_event is not None
+                                    and self.stop_event.is_set())
+                        if queue and not stopping and stats["conn_fail_streak"] < 5:
+                            j = queue.pop(0)
+                            inflight[pool.submit(self._fetch_chapter, j, toc, quick)] = j
+
+                        if finished % 10 == 0:
+                            log.info("    （进度 %d/%d）", finished, len(indices))
+                            p.flush()
+
+                    if stats["conn_fail_streak"] >= 5:
+                        for f in inflight:
+                            f.cancel()
+                        return "circuit_break"
+
+                    try:
+                        self._gate()
+                    except SystemExit:
+                        for f in inflight:
+                            f.cancel()
+                        raise
+            return "ok"
+
+        status = run_batch(targets, quick=True)
+
+        # 阶段 2：统一重试。
+        # 全程保持 quick —— 退避由引擎在「轮次之间」统一控制，而不是在
+        # 单个线程里 sleep，这样即使只有 1 个失败章，也不会拖住整批的收尾。
+        if retry and status == "ok":
+            for rnd, wait_s in enumerate((0.8, 2.0, 4.0), start=1):
+                if not retry:
+                    break
+                log.info("🔁 第 %d 轮重试：%d 章待补", rnd, len(retry))
+                p.flush()
+                self.fetcher.gate_wait(wait_s)
+                batch, retry[:] = list(retry), []
+                if run_batch(batch, quick=True) != "ok":
+                    break
+            # 还没成功的，如实记账
+            for i in retry:
+                self._record_failure(i, toc, "重试后仍失败", dead, stats)
+
+        if status == "circuit_break":
+            log.error("\n⛔ 连续 5 章连接失败，判定站点/线路暂时不可达，自动停止。")
+            log.error("   进度已保存：网络恢复后重跑同一命令即可续传。")
+
+        p.flush()
+        return stats["done_now"], dead
 
     # ---------- 合并 TXT ----------
     def export(self, title, toc) -> str:

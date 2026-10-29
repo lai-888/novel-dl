@@ -68,7 +68,7 @@ def log(msg):
     _push_line(msg)
 
 
-def run_task(url, from_ch, to_ch, driver, delay, backup_url=None):
+def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1):
     stop_event = threading.Event()
     pause_event = threading.Event()
     STATE["stop_event"] = stop_event
@@ -85,7 +85,8 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None):
             eng = Engine(url, driver=driver, out_dir=OUT_DIR,
                          from_ch=from_ch, to_ch=to_ch, min_delay=delay,
                          backup_url=backup_url,
-                         stop_event=stop_event, pause_event=pause_event)
+                         stop_event=stop_event, pause_event=pause_event,
+                         workers=workers)
 
             prog = eng.prog
             orig_done, orig_fail = prog.mark_done, prog.mark_failed
@@ -181,7 +182,9 @@ PAGE = """<!doctype html>
       <option value="requests">requests（静态站）</option>
       <option value="selenium">selenium（动态站）</option></select></div>
     <div><label>每章间隔秒</label><input id="delay" type="number" min="0" step="0.5" value="0.5"></div>
+    <div><label>并发线程</label><input id="workers" type="number" min="1" max="16" step="1" value="1"></div>
   </div>
+  <p class="tip">并发调到 4~8 通常能快 3~6 倍。如果开始大量出现「战术跳过」，说明被站点限流了，把并发调回 1 或调大间隔。</p>
   <button id="go">开始下载</button>
   <div style="display:flex;gap:10px;margin-top:10px">
     <button id="pause" style="background:#c8971f">⏸ 暂停</button>
@@ -242,7 +245,8 @@ $('go').onclick=async()=>{
     from:$('f').value?parseInt($('f').value):null,
     to:$('t').value?parseInt($('t').value):null,
     driver:$('d').value,
-    delay:$('delay').value?parseFloat($('delay').value):0};
+    delay:$('delay').value?parseFloat($('delay').value):0,
+    workers:$('workers').value?parseInt($('workers').value):1};
   const r=await(await fetch('/api/start',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   if(!r.ok)alert(r.error);
@@ -334,7 +338,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(409, {"ok": False, "error": "已有任务在跑，等它结束再开新的"})
         run_task(url, req.get("from"), req.get("to"),
                  req.get("driver") or "requests", req.get("delay") or 0,
-                 backup_url=(req.get("backup") or "").strip() or None)
+                 backup_url=(req.get("backup") or "").strip() or None,
+                 workers=int(req.get("workers") or 1))
         self._json(200, {"ok": True})
 
     def log_message(self, *a):   # 静音 HTTP 访问日志

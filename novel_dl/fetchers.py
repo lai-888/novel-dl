@@ -8,6 +8,7 @@
 
 新增抓取策略 = 新增一个类 + 一行注册，不动任何其他代码。
 """
+import inspect
 import random
 import time
 
@@ -69,8 +70,30 @@ class BaseFetcher:
         """礼貌性随机延迟，模拟人类翻页（可被暂停/停止打断）。"""
         self.gate_wait(random.uniform(self.MIN_DELAY, self.MAX_DELAY))
 
-    def fetch(self, url: str) -> str:
+    def fetch(self, url: str, quick: bool = False) -> str:
+        """抓取页面。
+
+        quick=True：只请求一次，不重试。用于并发模式——单个线程不该为了
+        一章卡 20 秒，重试交给引擎统一安排（见 engine._download_parallel）。
+
+        兼容性说明：第三方 fetcher 只要实现 fetch(url) 即可。本方法会探测
+        它是否支持 quick 参数，不支持就退回调用 fetch(url)，不让新增参数
+        变成破坏性变更。
+        """
         raise NotImplementedError
+
+    def fetch_compat(self, url: str, quick: bool = False) -> str:
+        """按 fetcher 的实际签名选择调用方式（供引擎统一使用）。"""
+        fn = self.fetch
+        if not quick:
+            return fn(url)
+        try:
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            return fn(url)
+        if "quick" in params:
+            return fn(url, quick=True)
+        return fn(url)
 
 
 @register("requests")
@@ -95,16 +118,18 @@ class RequestsFetcher(BaseFetcher):
         import os
         self.session.trust_env = os.environ.get("NOVEL_DL_PROXY") == "1"
 
-    def fetch(self, url: str) -> str:
+    def fetch(self, url: str, quick: bool = False) -> str:
+        retries = 1 if quick else self.RETRIES
         last_err = None
         attempt = 0
-        while attempt < self.RETRIES:
+        while attempt < retries:
             attempt += 1
             try:
                 r = self.session.get(url, timeout=self.TIMEOUT)
                 r.raise_for_status()
                 r.encoding = r.apparent_encoding or r.encoding
-                self.polite_sleep()
+                if not quick:
+                    self.polite_sleep()
                 return r.text
             except Exception as e:
                 last_err = e
@@ -117,10 +142,16 @@ class RequestsFetcher(BaseFetcher):
                     log.warning("    ⚠ 证书验证失败，已对该站点禁用证书校验后重试")
                     attempt -= 1
                     continue
-                wait = min(2 ** attempt, 10)   # 2s, 4s, 8s, 10s
-                log.warning("    ⚠ 请求失败(%s)，%ds 后第 %d/%d 次重试",
-                            e, wait, attempt, self.RETRIES)
+                if attempt >= retries:
+                    break
+                wait = self._backoff(attempt)
+                log.warning("    ⚠ 请求失败(%s)，%.1fs 后第 %d/%d 次重试",
+                            e, wait, attempt, retries)
                 self.gate_wait(wait)
+
+        if quick:
+            # 并发模式：不在单个线程里死磕，立刻抛给引擎，腾出线程
+            raise ConnectionError(f"请求失败: {url} ({last_err})")
 
         # 最后手段：直连被重置时改走系统代理再试 1 次
         alt = requests.Session()
@@ -136,6 +167,20 @@ class RequestsFetcher(BaseFetcher):
         except Exception as e:
             last_err = e
         raise ConnectionError(f"重试 {self.RETRIES} 次仍失败: {url} ({last_err})")
+
+    @classmethod
+    def _backoff(cls, attempt: int) -> float:
+        """指数退避 + 抖动。
+
+        抖动（jitter）很关键：并发抓取时，多个线程会同时收到限流响应，
+        如果退避时间完全相同，它们会同时重试 —— 这在站点看来就是攻击，
+        反而延长被封时间。加 0~50% 随机量把重试打散。
+
+        上限也从 10s 降到 6s：章节失败后由引擎记账、下次运行重试，
+        没必要在单次运行里死磕。
+        """
+        base = min(2 ** attempt, 6)
+        return base * (0.75 + random.random() * 0.5)
 
 
 @register("selenium")
