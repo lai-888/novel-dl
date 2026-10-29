@@ -118,7 +118,7 @@ def main():
             page = r.read().decode()
         check("首页 200", True)
         check("主按钮存在", 'id="go"' in page)
-        check("高级选项可折叠", "<details>" in page)
+        check("高级选项可折叠", "<details" in page and "<summary" in page)
         check("无内部黑话", "战术跳过" not in page and "阵亡" not in page)
         check("有粘贴按钮", 'id="paste"' in page, "缺少粘贴按钮")
         check("有保存位置输入框", 'id="outdir"' in page, "缺少保存位置")

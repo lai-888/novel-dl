@@ -197,188 +197,276 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <title>小说下载</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12100e">
 <style>
-  :root{--bg:#0f1420;--card:#1a2233;--fg:#e8ecf4;--dim:#8a94a8;--acc:#4f8cff;
-        --ok:#3fb96f;--bad:#e06060;--line:#2c3752}
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-    font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif;padding:28px 16px}
-  .wrap{max-width:640px;margin:0 auto}
-  h1{font-size:22px;margin:0 0 20px;font-weight:600}
-  .card{background:var(--card);border-radius:14px;padding:22px;margin:0 0 14px}
-  label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
-  input,select{width:100%;padding:12px 14px;border-radius:9px;
-    border:1px solid var(--line);background:#0f1420;color:var(--fg);
-    font-size:15px;font-family:inherit}
-  input:focus,select:focus{outline:none;border-color:var(--acc)}
-  #go{background:var(--acc);border:0;color:#fff;padding:14px;border-radius:9px;
-    font-size:16px;font-weight:600;cursor:pointer;width:100%;margin-top:16px;
-    font-family:inherit}
-  #go:disabled{opacity:.45;cursor:default}
-  /* 网址行：输入框 + 粘贴按钮 */
-  .urlrow{display:flex;gap:8px;align-items:stretch}
-  .urlrow input{flex:1;min-width:0}
-  .urlrow button{flex:0 0 auto;width:auto;padding:0 18px;border-radius:9px;
-    border:1px solid var(--line);background:#232f47;color:var(--fg);
-    font-size:14px;cursor:pointer;font-family:inherit;white-space:nowrap}
-  .urlrow button:hover{background:#2c3a55}
-  .urlrow button:active{transform:scale(.97)}
-  .saverow{margin-top:16px}
-  .saverow label{margin-bottom:6px}
-  .ctrl{display:none;gap:10px;margin-top:10px}
-  .ctrl.on{display:flex}
-  .ctrl button{flex:1;border:0;color:#fff;padding:12px;border-radius:9px;
-    font-size:15px;cursor:pointer;font-family:inherit}
-  .ctrl button:disabled{opacity:.4;cursor:default}
-  #pause{background:#c8971f}#stop{background:#c04040}
-  details{margin-top:16px}
-  summary{cursor:pointer;color:var(--dim);font-size:13.5px;
-    list-style:none;user-select:none}
-  summary::-webkit-details-marker{display:none}
-  summary::before{content:"▸ ";color:var(--dim)}
-  details[open] summary::before{content:"▾ "}
-  .adv{margin-top:14px;display:grid;gap:12px;
-    grid-template-columns:1fr 1fr}
-  .adv .full{grid-column:1/-1}
-  .adv input,.adv select{padding:10px 12px;font-size:14px}
-  .adv label{margin-bottom:4px;font-size:12.5px}
-  .hint{font-size:12px;color:var(--dim);margin:4px 0 0}
-  /* 手机：高级选项单列，避免挤成两半 */
-  @media (max-width:520px){
-    body{padding:18px 12px}
-    .card{padding:18px}
-    .adv{grid-template-columns:1fr}
+  :root{
+    --paper:#12100e; --raise:#1c1916; --ink:#f2ede6; --mute:#8f8579;
+    --line:#2a2521; --amber:#d9a441; --amber-dim:#a8802f;
+    --ok:#5aa06a; --warn:#c98a3c; --bad:#b85450;
+    --r:3px;
   }
-  /* 进度：没开始时整块不显示，别让空进度条占地方 */
-  #progress{display:none}
-  #progress.on{display:block}
-  #status{font-size:15px;margin-bottom:14px;min-height:24px}
-  .bar{height:8px;background:#0b0f18;border-radius:5px;overflow:hidden}
-  .bar>i{display:block;height:100%;background:var(--acc);
-    width:0;transition:width .35s;border-radius:5px}
-  .meta{display:flex;justify-content:space-between;margin-top:10px;
-    font-size:13px;color:var(--dim)}
-  .meta b{color:var(--fg);font-variant-numeric:tabular-nums}
-  #done{display:none;margin-top:18px;text-align:center}
-  #done.on{display:block}
-  #done a{display:inline-block;background:var(--ok);color:#fff;text-decoration:none;
-    padding:12px 28px;border-radius:9px;font-weight:600}
-  #warn{display:none;margin-top:12px;font-size:13px;color:#e0a94f;
-    background:rgba(224,169,79,.1);padding:10px 12px;border-radius:8px}
-  #warn.on{display:block}
-  #log{margin-top:16px}
-  #logbox{background:#0b0f18;border-radius:8px;padding:12px;height:200px;
-    overflow-y:auto;font:12px/1.7 Consolas,monospace;white-space:pre-wrap;
-    color:#8fa6c4;margin-top:10px}
-</style></head><body><div class="wrap">
-<h1>小说下载</h1>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--paper);color:var(--ink)}
+  body{
+    font:16px/1.55 "Inter Tight","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    padding:clamp(20px,5vw,56px) clamp(16px,4vw,32px) 64px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .app{max-width:680px;margin:0 auto}
 
-<div class="card">
-  <label for="url">小说目录页网址</label>
-  <div class="urlrow">
-    <input id="url" placeholder="把网址粘贴到这里" autocomplete="off" spellcheck="false">
-    <button id="paste" type="button" title="从剪贴板粘贴">粘贴</button>
-  </div>
-  <button id="go">开始下载</button>
-  <div class="ctrl" id="ctrl">
-    <button id="pause">暂停</button>
-    <button id="stop">停止</button>
-  </div>
+  /* ── 头部：小而安静的标记，不用大标题 ── */
+  .head{display:flex;align-items:baseline;gap:10px;margin-bottom:clamp(28px,6vw,48px)}
+  .mark{font-size:13px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--mute);font-weight:600}
+  .head em{font-style:normal;color:var(--amber);font-size:13px;letter-spacing:.06em}
 
-  <div class="saverow">
-    <label for="outdir">保存到</label>
-    <div class="urlrow">
-      <input id="outdir" placeholder="留空 = 程序目录下的 books 文件夹" autocomplete="off" spellcheck="false">
-      <button id="opendir" type="button" title="打开这个文件夹">打开</button>
-    </div>
-  </div>
+  /* ── 输入区 ── */
+  .field{margin-bottom:14px}
+  .lbl{display:block;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--mute);margin-bottom:9px;font-weight:600}
+  .bare{
+    width:100%;padding:15px 0;background:none;border:none;
+    border-bottom:1px solid var(--line);
+    color:var(--ink);font:16px/1.4 inherit;font-family:inherit;
+    transition:border-color .18s;
+  }
+  .bare::placeholder{color:#574f46}
+  .bare:focus{outline:none;border-bottom-color:var(--amber)}
+  .with-btn{display:flex;align-items:stretch;gap:0;border-bottom:1px solid var(--line);
+    transition:border-color .18s}
+  .with-btn:focus-within{border-bottom-color:var(--amber)}
+  .with-btn .bare{flex:1;min-width:0;border-bottom:none;padding:15px 0}
+  .mini{
+    flex:0 0 auto;align-self:center;
+    background:none;border:1px solid var(--line);color:var(--mute);
+    padding:7px 14px;border-radius:var(--r);font:12.5px inherit;
+    font-family:inherit;letter-spacing:.04em;cursor:pointer;
+    transition:color .15s,border-color .15s,background .15s;
+  }
+  .mini:hover{color:var(--ink);border-color:#443c34}
+  .mini:active{transform:translateY(1px)}
 
-  <details>
-    <summary>高级选项</summary>
-    <div class="adv">
-      <div class="full">
-        <label for="backup">备用网址（可选）</label>
-        <input id="backup" placeholder="主网址打不开时可以填镜像站" autocomplete="off">
-      </div>
-      <div>
-        <label for="f">从第几章开始</label>
-        <input id="f" type="number" min="1" placeholder="从头">
-      </div>
-      <div>
-        <label for="t">到第几章结束</label>
-        <input id="t" type="number" min="1" placeholder="到最后">
-      </div>
-      <div>
-        <label for="workers">同时下载几章</label>
-        <input id="workers" type="number" min="1" max="16" step="1" value="4">
-      </div>
-      <div>
-        <label for="delay">每章间隔（秒）</label>
-        <input id="delay" type="number" min="0" step="0.5" value="0.5">
-      </div>
-      <div class="full">
-        <label for="d">网站类型</label>
-        <select id="d">
-          <option value="requests">普通网站（推荐）</option>
-          <option value="selenium">需要浏览器渲染的网站</option>
-        </select>
-      </div>
-    </div>
-    <p class="hint" id="rulehint"></p>
-  </details>
+  /* ── 主按钮：实心单一强调色，足够大，移动端友好 ── */
+  .go{
+    display:block;width:100%;margin-top:clamp(22px,5vw,32px);
+    padding:17px;border:none;border-radius:var(--r);
+    background:var(--amber);color:#1a1408;
+    font:600 16px/1 inherit;font-family:inherit;letter-spacing:.02em;
+    cursor:pointer;transition:background .15s,transform .1s;
+    min-height:52px;                       /* 触控目标 */
+  }
+  .go:hover:not(:disabled){background:#e5b354}
+  .go:active:not(:disabled){transform:translateY(1px)}
+  .go:disabled{background:#3a332a;color:#6b6157;cursor:default}
+
+  /* ── 次要操作 ── */
+  .sub{display:none;gap:10px;margin-top:10px}
+  .sub.on{display:flex}
+  .sub button{
+    flex:1;min-height:46px;background:none;color:var(--mute);
+    border:1px solid var(--line);border-radius:var(--r);
+    font:13.5px inherit;font-family:inherit;cursor:pointer;
+    transition:color .15s,border-color .15s;
+  }
+  .sub button:hover:not(:disabled){color:var(--ink);border-color:#443c34}
+  .sub button:disabled{opacity:.35;cursor:default}
+
+  /* ── 保存位置：低调，紧贴输入区下沿 ── */
+  .save{margin-top:clamp(20px,4vw,26px)}
+  .save .bare{padding:11px 0;font-size:14px}
+  .save .lbl{margin-bottom:6px;font-size:11.5px}
+
+  /* ── 高级：折叠，默认不打扰 ── */
+  details.adv{margin-top:clamp(24px,5vw,34px)}
+  details.adv>summary{
+    list-style:none;cursor:pointer;user-select:none;
+    font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--mute);font-weight:600;
+    padding:10px 0;border-top:1px solid var(--line);
+    display:flex;align-items:center;gap:8px;transition:color .15s;
+  }
+  details.adv>summary:hover{color:var(--ink)}
+  details.adv>summary::-webkit-details-marker{display:none}
+  details.adv>summary::before{
+    content:"";width:6px;height:6px;border-right:1.5px solid currentColor;
+    border-bottom:1.5px solid currentColor;transform:rotate(-45deg);
+    transition:transform .2s;margin-right:2px;
+  }
+  details.adv[open]>summary::before{transform:rotate(45deg)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 20px;
+    padding:18px 0 4px}
+  .grid .full{grid-column:1/-1}
+  .grid .lbl{font-size:11.5px;margin-bottom:6px}
+  .grid .bare{padding:10px 0;font-size:14.5px}
+  select.bare{appearance:none;background-image:none;cursor:pointer}
+
+  /* ── 进度：数字是主角，不是进度条 ── */
+  .stage{margin-top:clamp(30px,6vw,44px);display:none}
+  .stage.on{display:block}
+  .status{font-size:14.5px;color:var(--mute);line-height:1.6;margin-bottom:18px}
+  .count{display:flex;align-items:baseline;gap:6px;margin-bottom:12px}
+  .count .big{
+    font-size:clamp(38px,10vw,54px);font-weight:600;line-height:.95;
+    letter-spacing:-.03em;font-variant-numeric:tabular-nums;
+    color:var(--ink);
+  }
+  .count .rest{font-size:13px;color:var(--mute);letter-spacing:.02em}
+  .track{height:2px;background:var(--line);position:relative;overflow:hidden}
+  .track i{position:absolute;inset:0 auto 0 0;width:0;background:var(--amber);
+    transition:width .45s cubic-bezier(.4,0,.2,1)}
+  .warn{display:none;margin-top:16px;font-size:13.5px;line-height:1.6;
+    color:var(--warn);padding-left:12px;border-left:2px solid var(--warn)}
+  .warn.on{display:block}
+  .done{display:none;margin-top:22px}
+  .done.on{display:block}
+  .done a{
+    display:inline-flex;align-items:center;gap:9px;
+    background:none;border:1px solid var(--ok);color:var(--ok);
+    text-decoration:none;padding:13px 24px;border-radius:var(--r);
+    font-size:14.5px;font-weight:600;min-height:48px;
+    transition:background .15s,color .15s;
+  }
+  .done a:hover{background:var(--ok);color:#0e1a11}
+
+  /* ── 日志 ── */
+  details.log{margin-top:26px}
+  details.log>summary{
+    list-style:none;cursor:pointer;font-size:11.5px;letter-spacing:.1em;
+    text-transform:uppercase;color:#6b6157;padding:10px 0;
+    border-top:1px solid var(--line);
+  }
+  details.log>summary::-webkit-details-marker{display:none}
+  details.log>summary:hover{color:var(--mute)}
+  #logbox{
+    max-height:230px;overflow-y:auto;margin-top:12px;
+    font:11.5px/1.85 ui-monospace,"SF Mono",Consolas,monospace;
+    white-space:pre-wrap;color:#6f665c;word-break:break-word;
+  }
+
+  /* ── 手机：单列、加大触控、去掉悬停态 ── */
+  @media (max-width:560px){
+    .grid{grid-template-columns:1fr;gap:16px}
+    .count .big{font-size:44px}
+    .head{margin-bottom:26px}
+    .done a{width:100%;justify-content:center}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important;animation:none!important}
+  }
+</style></head><body><div class="app">
+
+<div class="head">
+  <span class="mark">小说下载</span>
+  <em id="ver"></em>
 </div>
 
-<div class="card">
-  <div id="status">等待开始</div>
-  <div id="progress">
-    <div class="bar"><i id="fill"></i></div>
-    <div class="meta">
-      <span><b id="prog">0</b> / <b id="total">0</b> 章</span>
-      <span id="pct">0%</span>
-    </div>
-    <div id="warn"></div>
+<div class="field">
+  <label class="lbl" for="url">目录页网址</label>
+  <div class="with-btn">
+    <input class="bare" id="url" placeholder="粘贴小说目录页的网址"
+           autocomplete="off" spellcheck="false"
+           inputmode="url" autocapitalize="off" autocorrect="off">
+    <button class="mini" id="paste" type="button">粘贴</button>
   </div>
-  <div id="done"><a id="dl" href="/api/txt">下载 TXT 文件</a></div>
-  <details id="log">
-    <summary>运行日志</summary>
-    <div id="logbox"></div>
-  </details>
 </div>
+
+<div class="save">
+  <label class="lbl" for="outdir">保存位置</label>
+  <div class="with-btn">
+    <input class="bare" id="outdir" placeholder="默认：程序目录下的 books"
+           autocomplete="off" spellcheck="false">
+    <button class="mini" id="opendir" type="button">打开</button>
+  </div>
+</div>
+
+<button class="go" id="go">开始下载</button>
+<div class="sub" id="ctrl">
+  <button id="pause">暂停</button>
+  <button id="stop">停止</button>
+</div>
+
+<details class="adv">
+  <summary>高级选项</summary>
+  <div class="grid">
+    <div class="full">
+      <label class="lbl" for="backup">备用网址</label>
+      <input class="bare" id="backup" placeholder="主网址打不开时用"
+             autocomplete="off">
+    </div>
+    <div>
+      <label class="lbl" for="f">起始章</label>
+      <input class="bare" id="f" type="number" min="1" inputmode="numeric"
+             placeholder="从头">
+    </div>
+    <div>
+      <label class="lbl" for="t">结束章</label>
+      <input class="bare" id="t" type="number" min="1" inputmode="numeric"
+             placeholder="到最后">
+    </div>
+    <div>
+      <label class="lbl" for="workers">同时下载</label>
+      <input class="bare" id="workers" type="number" min="1" max="16"
+             step="1" value="4" inputmode="numeric">
+    </div>
+    <div>
+      <label class="lbl" for="delay">每章间隔</label>
+      <input class="bare" id="delay" type="number" min="0" step="0.5"
+             value="0.5" inputmode="decimal">
+    </div>
+    <div class="full">
+      <label class="lbl" for="d">网站类型</label>
+      <select class="bare" id="d">
+        <option value="requests">普通网站</option>
+        <option value="selenium">需要浏览器渲染</option>
+      </select>
+    </div>
+  </div>
+  <p class="status" id="rulehint" style="margin:10px 0 0;font-size:12px"></p>
+</details>
+
+<div class="stage" id="stage">
+  <div class="status" id="status">准备中</div>
+  <div class="count">
+    <span class="big" id="prog">0</span>
+    <span class="rest">/ <span id="total">0</span> 章 · <span id="pct">0%</span></span>
+  </div>
+  <div class="track"><i id="fill"></i></div>
+  <div class="warn" id="warn"></div>
+  <div class="done" id="done"><a id="dl" href="/api/txt">下载 TXT 文件</a></div>
+</div>
+
+<details class="log">
+  <summary>运行日志</summary>
+  <div id="logbox"></div>
+</details>
+
 </div>
 
 <script>
 const $=id=>document.getElementById(id);
-let busy=false, hadResult=false;
-
-function setStatus(s){ if($('status').textContent!==s) $('status').textContent=s; }
+let busy=false, hadRun=false;
 
 async function tick(){
   try{
     const s=await(await fetch('/api/status')).json();
-    setStatus(s.message);
+    if(s.running) hadRun=true;
+    if($('status').textContent!==s.message) $('status').textContent=s.message;
     $('prog').textContent=s.done;
     $('total').textContent=s.total;
     const p=s.total?Math.round(100*s.done/s.total):0;
     $('pct').textContent=p+'%';
     $('fill').style.width=p+'%';
-    // 有进度或有结果时才显示进度区，避免空进度条占地方
-    $('progress').classList.toggle('on', s.running||s.total>0);
 
-    // 失败章节：用日常说法，只在真有时出现
+    $('stage').classList.toggle('on', hadRun||s.running||s.total>0||!!s.result_txt);
+
     const w=$('warn');
     if(s.failed.length){
       w.classList.add('on');
-      w.textContent='有 '+s.failed.length+' 章没下载成功。可以再点一次「开始下载」，'
-        +'只补这些章节。';
-    }else{
-      w.classList.remove('on');
-    }
+      w.textContent='有 '+s.failed.length+' 章没成功。再点一次「开始下载」只补这些。';
+    }else w.classList.remove('on');
 
-    // 完成后的下载按钮
-    const d=$('done');
-    if(s.result_txt){ d.classList.add('on'); }
-    else if(!s.running){ d.classList.remove('on'); }
+    $('done').classList.toggle('on', !!s.result_txt);
 
     const c=$('logbox');
     const txt=s.lines.join('\\n');
@@ -391,19 +479,20 @@ async function tick(){
     $('pause').disabled=!busy;
     $('pause').textContent=s.paused?'继续':'暂停';
     $('stop').disabled=!busy;
+    if(s.version) $('ver').textContent='v'+s.version;
   }catch(e){
-    setStatus('连接不上本地服务，请确认那个黑色窗口还开着');
+    $('status').textContent='连接不上本地服务，确认那个窗口还开着';
+    $('stage').classList.add('on');
   }
 }
 setInterval(tick,1000);tick();
 
-// 规则提示：只在高级选项展开时才有意义，说人话
 (async()=>{
   try{
     const r=await(await fetch('/api/rules')).json();
     $('rulehint').textContent = r.count
-      ? '已加载 '+r.count+' 条网站解析规则。'
-      : '没有加载网站规则，程序会自动识别网页结构。';
+      ? '已收录 '+r.count+' 个网站；其它网站会自动分析网页结构'
+      : '未收录网站，全部靠自动分析网页结构';
   }catch(e){}
 })();
 
@@ -422,43 +511,29 @@ $('go').onclick=async()=>{
     to:$('t').value?parseInt($('t').value):null,
     driver:$('d').value,
     delay:$('delay').value?parseFloat($('delay').value):0,
-    workers:$('workers').value?parseInt($('workers').value):1,
+    workers:$('workers').value?parseInt($('workers').value):4,
     outdir:$('outdir').value.trim()
   };
+  $('stage').classList.add('on');
   const r=await(await fetch('/api/start',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   if(!r.ok) alert(r.error);
   tick();
 };
 
-// —— 粘贴按钮 ——
-// 浏览器只在 https / localhost 下给 navigator.clipboard，
-// 这里做了三级降级，保证本地 http 场景也能用。
 $('paste').onclick=async()=>{
   const inp=$('url');
-  const put=v=>{
-    inp.value=(v||'').trim();
-    inp.focus();
-    inp.dispatchEvent(new Event('input'));
-  };
-  // 1) 标准剪贴板 API
+  const put=v=>{ inp.value=(v||'').trim(); inp.focus();
+                 inp.dispatchEvent(new Event('input')); };
   try{
     const t=await navigator.clipboard.readText();
     if(t){ put(t); return; }
   }catch(e){}
-  // 2) 得到焦点的旧式 readText（document.execCommand）
-  try{
-    inp.focus();
-    const ok=document.execCommand('paste');
-    if(ok) return;
-  }catch(e){}
-  // 3) 都不行：提示手动粘贴，并选中输入框方便 Ctrl+V
-  inp.focus();
-  inp.select();
-  alert('浏览器不允许网页直接读剪贴板。\\n\\n已帮你选中输入框，按 Ctrl+V 粘贴即可。');
+  try{ inp.focus(); if(document.execCommand('paste')) return; }catch(e){}
+  inp.focus(); inp.select();
+  alert('浏览器不允许网页直接读剪贴板。\\n已选中输入框，按 Ctrl+V 粘贴（手机上长按输入框选粘贴）。');
 };
 
-// —— 打开保存文件夹 ——
 $('opendir').onclick=async()=>{
   const r=await(await fetch('/api/opendir',{method:'POST'})).json();
   if(!r.ok) alert(r.error||'打不开文件夹');
@@ -469,17 +544,18 @@ $('url').addEventListener('keydown',e=>{
 });
 
 $('pause').onclick=async()=>{
-  const toResume=$('pause').textContent==='继续';
-  await fetch(toResume?'/api/resume':'/api/pause',{method:'POST'});
+  const resume=$('pause').textContent==='继续';
+  await fetch(resume?'/api/resume':'/api/pause',{method:'POST'});
   tick();
 };
 
 $('stop').onclick=async()=>{
-  if(!confirm('停止下载？已经下好的章节会保留，下次点开始会接着下。')) return;
+  if(!confirm('停止？已下好的章节会保留，下次接着下。')) return;
   await fetch('/api/stop',{method:'POST'});
   tick();
 };
 </script></body></html>"""
+
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -487,6 +563,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # 本地服务，页面和接口都不该被缓存：
+        # 否则改完代码后浏览器还拿着旧页面，看起来像「改动没生效」。
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.end_headers()
         self.wfile.write(body)
 
@@ -585,10 +666,38 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def lan_addresses() -> list[str]:
+    """列出本机在局域网里的 IP，给手机访问用。"""
+    import socket
+    ips = []
+    # 主出口 IP（连一个不存在的外部地址不会真的发包，只为让系统选路由）
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.2)
+        try:
+            s.connect(("10.255.255.255", 1))
+            ips.append(s.getsockname()[0])
+        finally:
+            s.close()
+    except Exception:
+        pass
+    # 兜底：遍历主机名解析出的地址
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+    return ips
+
+
 def main():
     ap = argparse.ArgumentParser(description="novel-dl 本地网页控制台")
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--no-open", action="store_true")
+    ap.add_argument("--lan", action="store_true",
+                    help="允许同一 Wi-Fi 下的手机访问（默认只允许本机）")
     a = ap.parse_args()
     os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -601,11 +710,12 @@ def main():
     nlog.log.addHandler(fh)
     nlog.log.addHandler(_StateHandler())
 
-    # 端口被占用时自动换下一个（之前闪退的元凶就是端口冲突）
+    # --lan 时监听所有网卡，否则只监听本机
+    bind = "0.0.0.0" if a.lan else "127.0.0.1"
     srv = None
     for port in range(a.port, a.port + 10):
         try:
-            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            srv = ThreadingHTTPServer((bind, port), Handler)
             break
         except OSError:
             nlog.warning("端口 %d 已被占用，尝试下一个…", port)
@@ -614,13 +724,20 @@ def main():
         input("按回车键关闭...")
         sys.exit(1)
 
-    url = f"http://127.0.0.1:{srv.server_address[1]}"
-    nlog.info("novel-dl 控制台运行中: %s  (关掉本窗口即停止服务)", url)
+    port = srv.server_address[1]
+    self_url = f"http://127.0.0.1:{port}"
+    nlog.info("已启动：%s", self_url)
+    if a.lan:
+        for ip in lan_addresses():
+            nlog.info("手机访问：http://%s:%d  （需与电脑同一 Wi-Fi）", ip, port)
+    else:
+        nlog.info("仅本机可访问。想让手机也能用，加 --lan 参数重启。")
+
     n_rules = len(rules.load_rules())
-    nlog.info("站点规则：%d 条%s", n_rules,
-              "" if n_rules else "（未加载规则，将使用通用启发式解析）")
+    nlog.info("站点规则：%d 条；未收录的站会自动分析网页结构", n_rules)
+
     if not a.no_open:
-        threading.Timer(0.6, webbrowser.open, args=(url,)).start()
+        threading.Timer(0.6, webbrowser.open, args=(self_url,)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

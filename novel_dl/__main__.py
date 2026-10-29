@@ -45,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("-w", "--workers", type=int, default=None, metavar="N",
                     help="并发抓取线程数（默认 1=串行）。4~8 通常最合适；"
                          "站点限流时调小")
+    ap.add_argument("--no-auto", action="store_true",
+                    help="关闭自动分析网页结构（默认开启：未收录的站点会在"
+                         "通用解析失败时自动推断选择器并缓存）")
     ap.add_argument("--backup", default=None, metavar="URL",
                     help="备用网址（镜像站），主站某章失败时自动改用")
     ap.add_argument("--rules", default=None, metavar="FILE",
@@ -80,6 +83,7 @@ def main(argv=None):
         backup_url=args.backup,
         max_toc_pages=cfg["max_pages"],
         workers=args.workers if args.workers is not None else cfg["workers"],
+        auto_detect=not args.no_auto,
     )
     engine.run()
 

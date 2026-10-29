@@ -28,7 +28,7 @@ class Engine:
     def __init__(self, book_url: str, driver="requests", out_dir="books",
                  from_ch=None, to_ch=None, min_delay=None,
                  backup_url=None, stop_event=None, pause_event=None,
-                 max_toc_pages=200, workers=1):
+                 max_toc_pages=200, workers=1, auto_detect=True):
         book_url = (book_url or "").strip()
         if not book_url:
             raise SystemExit("没有提供小说目录页网址")
@@ -42,7 +42,8 @@ class Engine:
         if min_delay is not None:
             self.fetcher.MIN_DELAY = min_delay
             self.fetcher.MAX_DELAY = max(min_delay * 3, min_delay)
-        self.parser = get_parser(book_url)
+        self.parser = get_parser(book_url, fetcher=self.fetcher,
+                                 lazy_auto=auto_detect)
         self.prog = Progress(out_dir, book_url)
         self.from_ch, self.to_ch = from_ch, to_ch
         self.max_toc_pages = max_toc_pages

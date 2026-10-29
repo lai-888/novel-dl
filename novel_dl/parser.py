@@ -372,13 +372,90 @@ class GenericParser(BaseParser):
         return best
 
 
-def get_parser(book_url: str):
-    """优先站点规则，其次专用解析器，最后通用解析器。"""
+def get_parser(book_url: str, fetcher=None, auto: bool = True,
+               lazy_auto: bool = False):
+    """选择解析器，优先级：
+
+        1. 手写的站点规则（sites.json）—— 最可靠，人工确认过
+        2. 之前自动推断并验证通过的规则（缓存）
+        3. 通用启发式解析器 —— 兜底
+
+    lazy_auto=True 时**不**在这里做现场推断，而是返回一个延迟推断的包装器：
+    先用通用解析器跑，只有在它失败时才去推断。这样对能直接解析的站点
+    不会浪费任何额外请求（推断本身要抓目录页 + 一个章节页）。
+    """
     rule = find_rule(book_url)
     if rule:
         return SiteRuleParser(rule)
+
     host = re.sub(r"^https?://", "", book_url).split("/")[0]
     for key, p in PARSERS.items():
         if key != "generic" and key in host:
             return p
+
+    if auto and fetcher is not None:
+        # 先看缓存：有就直接用，零额外请求
+        try:
+            from .autodetect import load_learned
+            learned = load_learned(host.split(":")[0])
+            if learned:
+                log.info("使用之前推断过的规则（%s）", learned.get("host"))
+                return SiteRuleParser(learned)
+        except Exception:
+            pass
+
+        if lazy_auto:
+            return _LazyAutoParser(book_url, fetcher)
+        try:
+            from .autodetect import ensure_rule
+            learned = ensure_rule(book_url, fetcher)
+            if learned:
+                return SiteRuleParser(learned)
+        except Exception as e:
+            log.info("自动推断不可用（%s），改用通用解析", e)
+
     return PARSERS["generic"]
+
+
+class _LazyAutoParser:
+    """先用通用解析；通用解析失败时才去推断站点结构。
+
+    目的：不给「本来就能解析」的站点增加任何请求开销。
+    """
+
+    name = "generic+auto"
+
+    def __init__(self, book_url, fetcher):
+        self.book_url = book_url
+        self.fetcher = fetcher
+        self._generic = PARSERS["generic"]
+        self._rule_parser = None
+        self._tried = False
+
+    def _try_detect(self):
+        if self._tried:
+            return self._rule_parser
+        self._tried = True
+        try:
+            from .autodetect import ensure_rule
+            learned = ensure_rule(self.book_url, self.fetcher)
+            if learned:
+                self._rule_parser = SiteRuleParser(learned)
+        except Exception as e:
+            log.info("自动推断未成功（%s），继续用通用解析", e)
+        return self._rule_parser
+
+    def parse_toc(self, html, base_url):
+        try:
+            return self._generic.parse_toc(html, base_url)
+        except SystemExit:
+            # 通用解析都找不到章节链接 → 这才值得花请求去推断
+            rp = self._try_detect()
+            if rp is not None:
+                return rp.parse_toc(html, base_url)
+            raise
+
+    def parse_chapter(self, html, **kw):
+        if self._rule_parser is not None:
+            return self._rule_parser.parse_chapter(html)
+        return self._generic.parse_chapter(html, **kw)
