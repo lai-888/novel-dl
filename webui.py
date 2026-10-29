@@ -59,9 +59,38 @@ class _StateHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            _push_line(record.getMessage())
+            _push_line(_humanize(record.getMessage()))
         except Exception:
             pass
+
+
+# 内部术语 → 用户看得懂的说法。
+# 日志本身保留原文（排查问题要用），只在送到界面时翻译一遍。
+_TRANSLATE = [
+    ("战术跳过", "跳过"),
+    ("阵亡名单", "没下载成功的章节"),
+    ("阵亡", "失败"),
+    ("断点续传中，已完成章节不会重复下载", "已有进度，只下剩下的"),
+    ("发现历史进度", "发现之前的进度"),
+    ("检测到更新：", "网站更新了，"),
+    ("本轮新下载", "本次下载"),
+    ("已按照站点规则纠正网址", "已自动修正网址"),
+    ("检测到章节页网址，已改用目录页", "这是章节页，已自动换成目录页"),
+    ("已合并", "已保存"),
+    ("战术性跳过", "跳过"),
+    ("⚡ 并发抓取", "同时下载"),
+    ("🔁", "重新尝试"),
+    ("📖", ""), ("📚", ""), ("📦", ""), ("🔧", ""), ("↪", "→"),
+    ("☠", "×"), ("✓", "√"), ("⛔", "!"), ("⚠", "!"), ("⏸", ""),
+    ("▶", ""), ("⏹", ""), ("ℹ", ""), ("🆕", ""),
+]
+
+
+def _humanize(msg: str) -> str:
+    for a, b in _TRANSLATE:
+        msg = msg.replace(a, b)
+    # 去掉因替换产生的多余空格
+    return " ".join(msg.split()) if len(msg) < 120 else msg
 
 
 def log(msg):
@@ -80,7 +109,7 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1):
                          backup_url=backup_url, failed=[],
                          result_txt=None, started_at=time.time(),
                          finished_at=None, done=0, total=0,
-                         message="正在解析目录…")
+                         message="正在读取章节列表…")
         try:
             eng = Engine(url, driver=driver, out_dir=OUT_DIR,
                          from_ch=from_ch, to_ch=to_ch, min_delay=delay,
@@ -113,11 +142,12 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1):
             txt = eng.run()
             with STATE_LOCK:
                 STATE["result_txt"] = txt
-                STATE["message"] = "完成 ✔"
+                title = eng.prog.state.get("title") or "小说"
+                STATE["message"] = f"下载完成，共 {STATE['done']} 章 —— {title}"
         except (SystemExit, KeyboardInterrupt) as e:
             log(f"任务已停止：{e}")
             with STATE_LOCK:
-                STATE["message"] = "已停止（进度已保存，可重跑续传）"
+                STATE["message"] = "已停止，进度已保存。再点一次「开始下载」会接着下。"
             try:
                 txt = eng.export(eng.prog.state.get("title") or "未命名",
                                  eng.prog.state.get("toc") or [])
@@ -128,7 +158,13 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1):
         except Exception as e:
             log(f"任务失败：{e}")
             with STATE_LOCK:
-                STATE["message"] = f"失败：{e}"
+                msg = str(e)
+                if "目录页解析不到" in msg:
+                    STATE["message"] = "这个网址不是小节列表页。请打开小说的「目录」页面，复制那一页的网址。"
+                elif "http" in msg.lower() or "connection" in msg.lower():
+                    STATE["message"] = "连不上这个网站。检查网址是否正确、网络是否正常。"
+                else:
+                    STATE["message"] = f"出错了：{msg[:80]}"
         finally:
             with STATE_LOCK:
                 STATE["running"] = False
@@ -140,125 +176,231 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1):
 
 PAGE = """<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
-<title>novel-dl 控制台</title>
+<title>小说下载</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root{--bg:#0f1420;--card:#1a2233;--fg:#e8ecf4;--dim:#8a94a8;--acc:#4f8cff;--ok:#3fb96f;--bad:#e06060}
-  *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-    font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif;padding:24px}
-  .wrap{max-width:860px;margin:0 auto}
-  h1{font-size:20px;margin:0 0 4px}h1 small{color:var(--dim);font-weight:400;font-size:13px}
-  .card{background:var(--card);border-radius:12px;padding:18px 20px;margin:14px 0}
-  label{font-size:13px;color:var(--dim)}
-  input,select{width:100%;padding:10px 12px;margin:4px 0 12px;border-radius:8px;
-    border:1px solid #2c3752;background:#0f1420;color:var(--fg);font-size:14px}
-  .row{display:flex;gap:12px}.row>div{flex:1}
-  button{background:var(--acc);border:0;color:#fff;padding:11px 26px;border-radius:8px;
-    font-size:15px;cursor:pointer;width:100%}
-  button:disabled{opacity:.45;cursor:default}
-  .bar{height:10px;background:#0f1420;border-radius:6px;overflow:hidden;margin:10px 0 6px}
-  .bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),#7fb0ff);
-    width:0;transition:width .4s}
-  .stat{display:flex;justify-content:space-between;color:var(--dim);font-size:13px}
-  .stat b{color:var(--fg)}
-  #console{background:#0b0f18;border-radius:8px;padding:12px;height:260px;overflow-y:auto;
-    font:12px/1.7 Consolas,monospace;white-space:pre-wrap;color:#9fb3d1;margin-top:10px}
-  .failed{margin-top:8px;font-size:13px;color:var(--bad)}
-  .ok{color:var(--ok)}a.dl{color:var(--ok);text-decoration:none;font-weight:600}
-  .tip{font-size:12.5px;color:var(--dim);margin:8px 0 0}
-  #rules{font-size:12.5px;color:var(--dim);margin-top:6px;word-break:break-all}
+  :root{--bg:#0f1420;--card:#1a2233;--fg:#e8ecf4;--dim:#8a94a8;--acc:#4f8cff;
+        --ok:#3fb96f;--bad:#e06060;--line:#2c3752}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif;padding:28px 16px}
+  .wrap{max-width:640px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 20px;font-weight:600}
+  .card{background:var(--card);border-radius:14px;padding:22px;margin:0 0 14px}
+  label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
+  input,select{width:100%;padding:12px 14px;border-radius:9px;
+    border:1px solid var(--line);background:#0f1420;color:var(--fg);
+    font-size:15px;font-family:inherit}
+  input:focus,select:focus{outline:none;border-color:var(--acc)}
+  #go{background:var(--acc);border:0;color:#fff;padding:14px;border-radius:9px;
+    font-size:16px;font-weight:600;cursor:pointer;width:100%;margin-top:16px;
+    font-family:inherit}
+  #go:disabled{opacity:.45;cursor:default}
+  .ctrl{display:none;gap:10px;margin-top:10px}
+  .ctrl.on{display:flex}
+  .ctrl button{flex:1;border:0;color:#fff;padding:12px;border-radius:9px;
+    font-size:15px;cursor:pointer;font-family:inherit}
+  .ctrl button:disabled{opacity:.4;cursor:default}
+  #pause{background:#c8971f}#stop{background:#c04040}
+  details{margin-top:16px}
+  summary{cursor:pointer;color:var(--dim);font-size:13.5px;
+    list-style:none;user-select:none}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"▸ ";color:var(--dim)}
+  details[open] summary::before{content:"▾ "}
+  .adv{margin-top:14px;display:grid;gap:12px;
+    grid-template-columns:1fr 1fr}
+  .adv .full{grid-column:1/-1}
+  .adv input,.adv select{padding:10px 12px;font-size:14px}
+  .adv label{margin-bottom:4px;font-size:12.5px}
+  .hint{font-size:12px;color:var(--dim);margin:4px 0 0}
+  /* 手机：高级选项单列，避免挤成两半 */
+  @media (max-width:520px){
+    body{padding:18px 12px}
+    .card{padding:18px}
+    .adv{grid-template-columns:1fr}
+  }
+  /* 进度：没开始时整块不显示，别让空进度条占地方 */
+  #progress{display:none}
+  #progress.on{display:block}
+  #status{font-size:15px;margin-bottom:14px;min-height:24px}
+  .bar{height:8px;background:#0b0f18;border-radius:5px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:var(--acc);
+    width:0;transition:width .35s;border-radius:5px}
+  .meta{display:flex;justify-content:space-between;margin-top:10px;
+    font-size:13px;color:var(--dim)}
+  .meta b{color:var(--fg);font-variant-numeric:tabular-nums}
+  #done{display:none;margin-top:18px;text-align:center}
+  #done.on{display:block}
+  #done a{display:inline-block;background:var(--ok);color:#fff;text-decoration:none;
+    padding:12px 28px;border-radius:9px;font-weight:600}
+  #warn{display:none;margin-top:12px;font-size:13px;color:#e0a94f;
+    background:rgba(224,169,79,.1);padding:10px 12px;border-radius:8px}
+  #warn.on{display:block}
+  #log{margin-top:16px}
+  #logbox{background:#0b0f18;border-radius:8px;padding:12px;height:200px;
+    overflow-y:auto;font:12px/1.7 Consolas,monospace;white-space:pre-wrap;
+    color:#8fa6c4;margin-top:10px}
 </style></head><body><div class="wrap">
-<h1>📚 novel-dl 控制台 <small id="ver">断点续传 · 增量更新 · 战术跳过</small></h1>
+<h1>小说下载</h1>
 
 <div class="card">
-  <label>小说目录页网址</label>
-  <input id="url" placeholder="https://example.com/book/123/" value="">
-  <label>备用网址（可选，镜像站）—— 主站某章抓取失败时自动改用它</label>
-  <input id="backup" placeholder="留空则不使用" value="">
-  <div class="row">
-    <div><label>起始章（留空=从头）</label><input id="f" type="number" min="1" placeholder="如 100"></div>
-    <div><label>结束章（留空=到最后）</label><input id="t" type="number" min="1" placeholder="如 200"></div>
-    <div><label>抓取驱动</label><select id="d">
-      <option value="requests">requests（静态站）</option>
-      <option value="selenium">selenium（动态站）</option></select></div>
-    <div><label>每章间隔秒</label><input id="delay" type="number" min="0" step="0.5" value="0.5"></div>
-    <div><label>并发线程</label><input id="workers" type="number" min="1" max="16" step="1" value="1"></div>
-  </div>
-  <p class="tip">并发调到 4~8 通常能快 3~6 倍。如果开始大量出现「战术跳过」，说明被站点限流了，把并发调回 1 或调大间隔。</p>
+  <label for="url">小说目录页网址</label>
+  <input id="url" placeholder="把网址粘贴到这里" autocomplete="off" spellcheck="false">
   <button id="go">开始下载</button>
-  <div style="display:flex;gap:10px;margin-top:10px">
-    <button id="pause" style="background:#c8971f">⏸ 暂停</button>
-    <button id="stop" style="background:#c04040">⏹ 停止</button>
+  <div class="ctrl" id="ctrl">
+    <button id="pause">暂停</button>
+    <button id="stop">停止</button>
   </div>
-  <p class="tip">💡 中途断了？重新填同一网址再点一次就会自动续传，已下载章节不会重复请求。
-     「暂停」在当前章结束后停下，不丢进度；「停止」同样保留进度。</p>
-  <div id="rules"></div>
+
+  <details>
+    <summary>高级选项</summary>
+    <div class="adv">
+      <div class="full">
+        <label for="backup">备用网址（可选）</label>
+        <input id="backup" placeholder="主网址打不开时可以填镜像站" autocomplete="off">
+      </div>
+      <div>
+        <label for="f">从第几章开始</label>
+        <input id="f" type="number" min="1" placeholder="从头">
+      </div>
+      <div>
+        <label for="t">到第几章结束</label>
+        <input id="t" type="number" min="1" placeholder="到最后">
+      </div>
+      <div>
+        <label for="workers">同时下载几章</label>
+        <input id="workers" type="number" min="1" max="16" step="1" value="4">
+      </div>
+      <div>
+        <label for="delay">每章间隔（秒）</label>
+        <input id="delay" type="number" min="0" step="0.5" value="0.5">
+      </div>
+      <div class="full">
+        <label for="d">网站类型</label>
+        <select id="d">
+          <option value="requests">普通网站（推荐）</option>
+          <option value="selenium">需要浏览器渲染的网站</option>
+        </select>
+      </div>
+    </div>
+    <p class="hint" id="rulehint"></p>
+  </details>
 </div>
 
 <div class="card">
-  <div class="stat"><span>状态：<b id="msg">加载中…</b></span>
-    <span><b id="prog">0 / 0</b> 章</span></div>
-  <div class="bar"><i id="fill"></i></div>
-  <div class="stat"><span id="failinfo"></span><span id="txtinfo"></span></div>
-  <div id="console"></div>
+  <div id="status">等待开始</div>
+  <div id="progress">
+    <div class="bar"><i id="fill"></i></div>
+    <div class="meta">
+      <span><b id="prog">0</b> / <b id="total">0</b> 章</span>
+      <span id="pct">0%</span>
+    </div>
+    <div id="warn"></div>
+  </div>
+  <div id="done"><a id="dl" href="/api/txt">下载 TXT 文件</a></div>
+  <details id="log">
+    <summary>运行日志</summary>
+    <div id="logbox"></div>
+  </details>
 </div>
 </div>
 
 <script>
 const $=id=>document.getElementById(id);
-let busy=false;
+let busy=false, hadResult=false;
+
+function setStatus(s){ if($('status').textContent!==s) $('status').textContent=s; }
+
 async function tick(){
   try{
     const s=await(await fetch('/api/status')).json();
-    $('ver').textContent='v'+s.version+' · 断点续传 · 增量更新 · 战术跳过';
-    $('msg').textContent=s.message;
-    $('prog').textContent=`${s.done} / ${s.total}`;
-    $('fill').style.width=(s.total?100*s.done/s.total:0)+'%';
-    $('failinfo').textContent=s.failed.length?`☠ 阵亡 ${s.failed.length} 章：`+
-      s.failed.slice(0,5).map(f=>'第'+f[0]+'章 '+f[1]).join('；')+
-      (s.failed.length>5?' …':''):'';
-    $('txtinfo').innerHTML=s.result_txt?`<a class="dl" href="/api/txt">📦 下载 TXT</a>`:'';
-    const c=$('console');
-    if(c.textContent!==s.lines.join('\\n')){c.textContent=s.lines.join('\\n');c.scrollTop=1e9;}
+    setStatus(s.message);
+    $('prog').textContent=s.done;
+    $('total').textContent=s.total;
+    const p=s.total?Math.round(100*s.done/s.total):0;
+    $('pct').textContent=p+'%';
+    $('fill').style.width=p+'%';
+    // 有进度或有结果时才显示进度区，避免空进度条占地方
+    $('progress').classList.toggle('on', s.running||s.total>0);
+
+    // 失败章节：用日常说法，只在真有时出现
+    const w=$('warn');
+    if(s.failed.length){
+      w.classList.add('on');
+      w.textContent='有 '+s.failed.length+' 章没下载成功。可以再点一次「开始下载」，'
+        +'只补这些章节。';
+    }else{
+      w.classList.remove('on');
+    }
+
+    // 完成后的下载按钮
+    const d=$('done');
+    if(s.result_txt){ d.classList.add('on'); }
+    else if(!s.running){ d.classList.remove('on'); }
+
+    const c=$('logbox');
+    const txt=s.lines.join('\\n');
+    if(c.textContent!==txt){ c.textContent=txt; c.scrollTop=1e9; }
+
     busy=s.running;
     $('go').disabled=busy;
-    $('go').textContent=busy?'下载中…（关页面不中断）':'开始下载';
+    $('go').textContent=busy?'正在下载…':'开始下载';
+    $('ctrl').classList.toggle('on',busy);
     $('pause').disabled=!busy;
-    $('pause').textContent=s.paused?'▶ 继续':'⏸ 暂停';
+    $('pause').textContent=s.paused?'继续':'暂停';
     $('stop').disabled=!busy;
-    if(!$('rules').dataset.done){
-      $('rules').dataset.done='1';
-      const r=await(await fetch('/api/rules')).json();
-      $('rules').textContent = r.count
-        ? `📑 已加载 ${r.count} 条站点规则：` + r.sources.map(s=>s[0]+' ('+s[1]+')').join('，')
-        : '📑 未加载任何站点规则 —— 将使用通用启发式解析。规则写法见 docs/RULES.md';
-    }
-  }catch(e){$('msg').textContent='无法连接本地服务（进程可能已退出）';}
+  }catch(e){
+    setStatus('连接不上本地服务，请确认那个黑色窗口还开着');
+  }
 }
-setInterval(tick,1200);tick();
+setInterval(tick,1000);tick();
+
+// 规则提示：只在高级选项展开时才有意义，说人话
+(async()=>{
+  try{
+    const r=await(await fetch('/api/rules')).json();
+    $('rulehint').textContent = r.count
+      ? '已加载 '+r.count+' 条网站解析规则。'
+      : '没有加载网站规则，程序会自动识别网页结构。';
+  }catch(e){}
+})();
 
 $('go').onclick=async()=>{
   const url=$('url').value.trim();
-  if(!url){$('url').focus();return;}
-  const body={url,
+  if(!url){ $('url').focus(); return; }
+  if(!/^https?:\\/\\//i.test(url)){
+    alert('网址要以 http:// 或 https:// 开头');
+    return;
+  }
+  $('done').classList.remove('on');
+  const body={
+    url,
     backup:$('backup').value.trim(),
     from:$('f').value?parseInt($('f').value):null,
     to:$('t').value?parseInt($('t').value):null,
     driver:$('d').value,
     delay:$('delay').value?parseFloat($('delay').value):0,
-    workers:$('workers').value?parseInt($('workers').value):1};
+    workers:$('workers').value?parseInt($('workers').value):1
+  };
   const r=await(await fetch('/api/start',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
-  if(!r.ok)alert(r.error);
+  if(!r.ok) alert(r.error);
   tick();
 };
-document.addEventListener('keydown',e=>{if(e.key==='Enter'&&!busy)$('go').click();});
+
+$('url').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!busy) $('go').click();
+});
+
 $('pause').onclick=async()=>{
-  await fetch(!busy?'/api/resume':($('pause').textContent.includes('继续')?'/api/resume':'/api/pause'),{method:'POST'});
+  const toResume=$('pause').textContent==='继续';
+  await fetch(toResume?'/api/resume':'/api/pause',{method:'POST'});
   tick();
 };
+
 $('stop').onclick=async()=>{
-  if(!confirm('确定停止下载？已下载的章节会保留，之后重跑可续传。'))return;
+  if(!confirm('停止下载？已经下好的章节会保留，下次点开始会接着下。')) return;
   await fetch('/api/stop',{method:'POST'});
   tick();
 };
