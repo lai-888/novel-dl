@@ -80,7 +80,8 @@ def download(book_url: str, out_dir: str, fetcher_headers=None,
                 pass
 
         safe = re.sub(r'[\\/:*?"<>|]', "_", book_name)
-        book_dir = os.path.join(out_dir, safe)
+        # 每本书独立子目录，和通用流程保持一致，书架才能正确识别
+        book_dir = os.path.join(out_dir, f"gh_{safe}")
         os.makedirs(book_dir, exist_ok=True)
         out_txt = os.path.join(book_dir, f"{safe}.txt")
         # 书名本身常带《》，写标题时别再套一层

@@ -71,7 +71,6 @@ class StabFetcher(fetchers.BaseFetcher):
         n = url.split("/")[-1].split(".")[0]
         return ch_html(n)
 
-
 fetchers.FETCHERS["stab"] = StabFetcher
 
 
@@ -127,7 +126,9 @@ def test_stop_is_responsive():
     """停止信号必须能打断下载，且已完成的章节要保住。"""
     print("\n[3] 停止响应：能中断，且已下章节不丢")
     StabFetcher.chapters = 200
-    StabFetcher.delay = 0.01
+    # 每章 40ms，200 章约 8 秒；0.6 秒时停止，必然还有大量未完成。
+    # 延迟不能太小 —— 太快的话整本书在停止信号前就跑完了，测不到打断。
+    StabFetcher.delay = 0.04
     StabFetcher.calls = []
     out = tmpdir("stop")
     try:
