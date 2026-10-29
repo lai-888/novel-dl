@@ -14,7 +14,7 @@ from bs4 import BeautifulSoup
 
 from . import log
 from .rules import find_rule, plain_selector
-from .textutil import body_from, clean_text, strip_page_mark
+from .textutil import body_from, clean_text, strip_invisible, strip_page_mark
 
 PARSERS = {}
 
@@ -51,7 +51,9 @@ class BaseParser:
 
 def _doc_title(soup, noise_pat) -> str:
     raw = soup.title.get_text(strip=True) if soup.title else ""
-    return noise_pat.split(raw)[0].strip() if raw else ""
+    if not raw:
+        return ""
+    return strip_invisible(noise_pat.split(raw)[0].strip())
 
 
 class SiteRuleParser(BaseParser):

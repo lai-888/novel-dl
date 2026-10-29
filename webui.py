@@ -97,11 +97,30 @@ def log(msg):
     _push_line(msg)
 
 
-def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1):
+def resolve_out_dir(path: str | None) -> str:
+    """把用户填的保存位置变成绝对路径。
+
+    规则：
+      · 留空 → 默认（项目下的 books/）
+      · 相对路径 → 相对「桌面」解释会反直觉，所以一律相对当前工作目录
+      · 支持 ~ 展开；末尾斜杠无所谓
+    不校验是否存在 —— 不存在会自动创建，这是用户想要的方便。
+    """
+    if not path or not str(path).strip():
+        return OUT_DIR
+    p = os.path.expanduser(str(path).strip().strip('"').strip("'"))
+    if not os.path.isabs(p):
+        p = os.path.abspath(p)
+    return p
+
+
+def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
+             out_dir=None):
     stop_event = threading.Event()
     pause_event = threading.Event()
     STATE["stop_event"] = stop_event
     STATE["pause_event"] = pause_event
+    target_dir = resolve_out_dir(out_dir)
 
     def worker():
         with STATE_LOCK:
@@ -109,9 +128,10 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1):
                          backup_url=backup_url, failed=[],
                          result_txt=None, started_at=time.time(),
                          finished_at=None, done=0, total=0,
+                         out_dir=target_dir,
                          message="正在读取章节列表…")
         try:
-            eng = Engine(url, driver=driver, out_dir=OUT_DIR,
+            eng = Engine(url, driver=driver, out_dir=target_dir,
                          from_ch=from_ch, to_ch=to_ch, min_delay=delay,
                          backup_url=backup_url,
                          stop_event=stop_event, pause_event=pause_event,
@@ -196,6 +216,16 @@ PAGE = """<!doctype html>
     font-size:16px;font-weight:600;cursor:pointer;width:100%;margin-top:16px;
     font-family:inherit}
   #go:disabled{opacity:.45;cursor:default}
+  /* 网址行：输入框 + 粘贴按钮 */
+  .urlrow{display:flex;gap:8px;align-items:stretch}
+  .urlrow input{flex:1;min-width:0}
+  .urlrow button{flex:0 0 auto;width:auto;padding:0 18px;border-radius:9px;
+    border:1px solid var(--line);background:#232f47;color:var(--fg);
+    font-size:14px;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .urlrow button:hover{background:#2c3a55}
+  .urlrow button:active{transform:scale(.97)}
+  .saverow{margin-top:16px}
+  .saverow label{margin-bottom:6px}
   .ctrl{display:none;gap:10px;margin-top:10px}
   .ctrl.on{display:flex}
   .ctrl button{flex:1;border:0;color:#fff;padding:12px;border-radius:9px;
@@ -246,11 +276,22 @@ PAGE = """<!doctype html>
 
 <div class="card">
   <label for="url">小说目录页网址</label>
-  <input id="url" placeholder="把网址粘贴到这里" autocomplete="off" spellcheck="false">
+  <div class="urlrow">
+    <input id="url" placeholder="把网址粘贴到这里" autocomplete="off" spellcheck="false">
+    <button id="paste" type="button" title="从剪贴板粘贴">粘贴</button>
+  </div>
   <button id="go">开始下载</button>
   <div class="ctrl" id="ctrl">
     <button id="pause">暂停</button>
     <button id="stop">停止</button>
+  </div>
+
+  <div class="saverow">
+    <label for="outdir">保存到</label>
+    <div class="urlrow">
+      <input id="outdir" placeholder="留空 = 程序目录下的 books 文件夹" autocomplete="off" spellcheck="false">
+      <button id="opendir" type="button" title="打开这个文件夹">打开</button>
+    </div>
   </div>
 
   <details>
@@ -381,12 +422,46 @@ $('go').onclick=async()=>{
     to:$('t').value?parseInt($('t').value):null,
     driver:$('d').value,
     delay:$('delay').value?parseFloat($('delay').value):0,
-    workers:$('workers').value?parseInt($('workers').value):1
+    workers:$('workers').value?parseInt($('workers').value):1,
+    outdir:$('outdir').value.trim()
   };
   const r=await(await fetch('/api/start',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
   if(!r.ok) alert(r.error);
   tick();
+};
+
+// —— 粘贴按钮 ——
+// 浏览器只在 https / localhost 下给 navigator.clipboard，
+// 这里做了三级降级，保证本地 http 场景也能用。
+$('paste').onclick=async()=>{
+  const inp=$('url');
+  const put=v=>{
+    inp.value=(v||'').trim();
+    inp.focus();
+    inp.dispatchEvent(new Event('input'));
+  };
+  // 1) 标准剪贴板 API
+  try{
+    const t=await navigator.clipboard.readText();
+    if(t){ put(t); return; }
+  }catch(e){}
+  // 2) 得到焦点的旧式 readText（document.execCommand）
+  try{
+    inp.focus();
+    const ok=document.execCommand('paste');
+    if(ok) return;
+  }catch(e){}
+  // 3) 都不行：提示手动粘贴，并选中输入框方便 Ctrl+V
+  inp.focus();
+  inp.select();
+  alert('浏览器不允许网页直接读剪贴板。\\n\\n已帮你选中输入框，按 Ctrl+V 粘贴即可。');
+};
+
+// —— 打开保存文件夹 ——
+$('opendir').onclick=async()=>{
+  const r=await(await fetch('/api/opendir',{method:'POST'})).json();
+  if(!r.ok) alert(r.error||'打不开文件夹');
 };
 
 $('url').addEventListener('keydown',e=>{
@@ -464,6 +539,23 @@ class Handler(BaseHTTPRequestHandler):
                     STATE["message"] = "正在停止…"
             return self._json(200, {"ok": True})
 
+        if self.path == "/api/opendir":
+            # 在资源管理器里打开当前保存目录
+            d = STATE.get("out_dir") or OUT_DIR
+            try:
+                os.makedirs(d, exist_ok=True)
+                if sys.platform.startswith("win"):
+                    os.startfile(d)            # noqa: S606 打开本地文件夹
+                elif sys.platform == "darwin":
+                    import subprocess
+                    subprocess.Popen(["open", d])
+                else:
+                    import subprocess
+                    subprocess.Popen(["xdg-open", d])
+                return self._json(200, {"ok": True, "path": d})
+            except Exception as e:
+                return self._json(200, {"ok": False, "error": f"打不开：{e}"})
+
         if self.path != "/api/start":
             return self._send(404, b"404", "text/plain")
         try:
@@ -478,11 +570,16 @@ class Handler(BaseHTTPRequestHandler):
         with STATE_LOCK:
             if STATE["running"]:
                 return self._json(409, {"ok": False, "error": "已有任务在跑，等它结束再开新的"})
+        try:
+            outdir = resolve_out_dir(req.get("outdir"))
+        except Exception as e:
+            return self._json(400, {"ok": False, "error": f"保存位置无效：{e}"})
         run_task(url, req.get("from"), req.get("to"),
                  req.get("driver") or "requests", req.get("delay") or 0,
                  backup_url=(req.get("backup") or "").strip() or None,
-                 workers=int(req.get("workers") or 1))
-        self._json(200, {"ok": True})
+                 workers=int(req.get("workers") or 1),
+                 out_dir=outdir)
+        self._json(200, {"ok": True, "outdir": outdir})
 
     def log_message(self, *a):   # 静音 HTTP 访问日志
         pass

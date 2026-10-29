@@ -44,7 +44,8 @@ def ch_html(n):
 
 class FakeSite(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.rstrip('/') == '/book/1':      # 只有目录页本身
+        # 目录页：/book/1/ 或 /book/2/（去掉末尾斜杠后判断）
+        if self.path.rstrip('/') in ('/book/1', '/book/2'):
             body = toc_html().encode()
         else:
             n = self.path.rstrip('.html').split('/')[-1]
@@ -83,6 +84,8 @@ def main():
     site_port = site.server_address[1]
     threading.Thread(target=site.serve_forever, daemon=True).start()
     book_url = f"http://127.0.0.1:{site_port}/book/1/"
+    # 第二本书（同站点不同路径），用于测试自定义保存目录
+    book_url2 = f"http://127.0.0.1:{site_port}/book/2/"
 
     # 2. 起 webui（用独立进程内服务，避免 Start-Process 时序问题）
     import webui
@@ -117,6 +120,10 @@ def main():
         check("主按钮存在", 'id="go"' in page)
         check("高级选项可折叠", "<details>" in page)
         check("无内部黑话", "战术跳过" not in page and "阵亡" not in page)
+        check("有粘贴按钮", 'id="paste"' in page, "缺少粘贴按钮")
+        check("有保存位置输入框", 'id="outdir"' in page, "缺少保存位置")
+        check("有打开文件夹按钮", 'id="opendir"' in page, "缺少打开按钮")
+        check("粘贴按钮有降级方案", "execCommand" in page and "Ctrl+V" in page)
 
         print("\n[2] 首次运行状态")
         st = api(base, "/api/status")
@@ -177,6 +184,45 @@ def main():
         r = api(base, "/api/start", {"url": "ftp://bad", "driver": "requests"})
         check("非 http 网址被拒", r.get("ok") is False, str(r))
         check("错误提示可读", "http" in (r.get("error") or ""), str(r.get("error")))
+
+        print("\n[9] 自定义保存位置")
+        custom = os.path.join(out, "我的小说存放处")
+        r = api(base, "/api/start", {"url": book_url2, "driver": "requests",
+                                     "delay": 0, "workers": 2,
+                                     "outdir": custom})
+        check("start 接受 outdir", r.get("ok") is True, str(r))
+        check("返回了绝对路径", os.path.isabs(r.get("outdir") or ""), str(r.get("outdir")))
+
+        deadline = time.time() + 40
+        last3 = None
+        while time.time() < deadline:
+            last3 = api(base, "/api/status")
+            if not last3["running"] and last3["result_txt"]:
+                break
+            time.sleep(0.3)
+        check("文件落在自定义目录", (last3.get("result_txt") or "").startswith(custom),
+              str(last3.get("result_txt")))
+        check("自定义目录确实有文件",
+              any(f.endswith(".txt") for _, _, fs in os.walk(custom) for f in fs),
+              "目录里没有 txt")
+
+        print("\n[10] 保存位置：相对路径与留空")
+        r = api(base, "/api/start", {"url": book_url, "driver": "requests",
+                                     "outdir": ""})
+        check("留空回落到默认目录",
+              os.path.abspath(r.get("outdir") or "") == os.path.abspath(webui.OUT_DIR),
+              str(r.get("outdir")))
+
+        print("\n[11] 打开文件夹接口")
+        # 只验证接口存在且返回 JSON，不真的弹资源管理器
+        try:
+            req = urllib.request.Request(base + "/api/opendir", data=b"",
+                                         method="POST")
+            with urllib.request.urlopen(req, timeout=5) as rr:
+                j = json.loads(rr.read().decode())
+            check("opendir 返回 JSON", "ok" in j, str(j))
+        except Exception as e:
+            check("opendir 返回 JSON", False, repr(e))
     finally:
         srv.shutdown()
         site.shutdown()

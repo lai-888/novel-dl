@@ -15,6 +15,7 @@ import time
 import requests
 
 from . import log
+from .encoding import decode_body
 
 FETCHERS = {}
 
@@ -127,10 +128,13 @@ class RequestsFetcher(BaseFetcher):
             try:
                 r = self.session.get(url, timeout=self.TIMEOUT)
                 r.raise_for_status()
-                r.encoding = r.apparent_encoding or r.encoding
                 if not quick:
                     self.polite_sleep()
-                return r.text
+                # 编码交给 encoding.decode_body 统一处理：
+                # requests 的 apparent_encoding 对短中文页经常猜错
+                text, used = decode_body(r.content, r.encoding or "")
+                log.debug("编码 %s -> %s", r.encoding, used)
+                return text
             except Exception as e:
                 last_err = e
                 # 证书链不完整（Windows 信任但 Python CA 库缺中间证书）：
@@ -161,9 +165,9 @@ class RequestsFetcher(BaseFetcher):
             log.warning("    ⚠ 直连反复失败，尝试经系统代理访问…")
             r = alt.get(url, timeout=self.TIMEOUT)
             r.raise_for_status()
-            r.encoding = r.apparent_encoding or r.encoding
             self.polite_sleep()
-            return r.text
+            text, _ = decode_body(r.content, r.encoding or "")
+            return text
         except Exception as e:
             last_err = e
         raise ConnectionError(f"重试 {self.RETRIES} 次仍失败: {url} ({last_err})")
