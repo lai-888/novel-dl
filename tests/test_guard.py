@@ -14,6 +14,7 @@ sys.path.insert(0, ROOT)
 
 from novel_dl import fetchers, library, log as nlog          # noqa: E402
 from novel_dl.engine import Engine                           # noqa: E402
+from novel_dl.progress import chapter_key                    # noqa: E402
 from novel_dl.guard import (EncryptedContent, check_encrypted,  # noqa: E402
                             detect_font_encryption, explain, filler_reason,
                             looks_truncated, preview_reason)
@@ -327,7 +328,10 @@ def main():
     Engine(SHORT_BOOK, driver="fake-short", out_dir=out, workers=1).run()
     book_dir = os.path.join(out, os.listdir(out)[0])
     cache = os.path.join(book_dir, "cache")
-    ch1 = open(os.path.join(cache, "00000.txt"), encoding="utf-8").read()
+    st0 = json.load(open(os.path.join(book_dir, "state.json"), encoding="utf-8"))
+    first_url = st0["toc"][0][1]
+    ch1 = open(os.path.join(cache, chapter_key(first_url) + ".txt"),
+               encoding="utf-8").read()
     check("同一章被请求了两次（先半截，后补抓）",
           len([u for u in ShortFetcher.calls if u.endswith("/1.html")]) == 2,
           str(ShortFetcher.calls))

@@ -20,6 +20,23 @@ PUA_CHARS = re.compile(r"[\ue000-\uf8ff]")
 ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\ufeff]")
 REPLACEMENT = re.compile(r"\ufffd")
 
+INVALID_FILENAME = re.compile(r'[\\/:*?"<>|\r\n\t\x00-\x1f]')
+WIN_RESERVED = ({"CON", "PRN", "AUX", "NUL"}
+                | {f"COM{i}" for i in range(1, 10)}
+                | {f"LPT{i}" for i in range(1, 10)})
+
+
+def safe_filename(name: str, max_len: int = 120) -> str:
+    """书名 → 各平台都能落盘的文件名。"""
+    s = INVALID_FILENAME.sub("_", (name or "").strip())
+    s = WHITESPACE.sub(" ", s).strip(" .")
+    if not s:
+        return "未命名"
+    if s.split(".")[0].upper() in WIN_RESERVED:
+        s = "_" + s
+    s = s[:max_len].strip(" .")
+    return s or "未命名"
+
 
 def strip_invisible(text: str) -> str:
     """剥掉私有区字符、零宽字符、替换字符 —— 这些是「看着像乱码」的主要来源。"""

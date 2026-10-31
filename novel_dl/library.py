@@ -4,6 +4,7 @@ import os
 import re
 
 from . import log
+from .progress import chapter_key, legacy_index
 from .quality import analyze, summarize
 
 
@@ -51,13 +52,16 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
     preview = state.get("preview") or {}
     title = state.get("title") or slug
 
+    key2idx = {chapter_key(url): i for i, (_t, url) in enumerate(toc)}
     on_disk = set()
     try:
         for name in os.listdir(cache_dir):
             if name.endswith(".txt"):
-                try:
-                    idx = int(name[:-4])
-                except ValueError:
+                stem = name[:-4]
+                idx = key2idx.get(stem)
+                if idx is None:
+                    idx = legacy_index(name)
+                if idx is None:
                     continue
                 if os.path.getsize(os.path.join(cache_dir, name)) > 32:
                     on_disk.add(idx)
@@ -66,9 +70,9 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
     done |= on_disk
 
     reports = []
-    for i, (ctitle, _url) in enumerate(toc):
+    for i, (ctitle, curl) in enumerate(toc):
         if i in done:
-            body = _read_cache(cache_dir, i)
+            body = _read_cache(cache_dir, curl, i)
             rep = analyze(ctitle, body)
             rep["no"] = i + 1
             rep["title"] = ctitle
@@ -100,16 +104,19 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
         "chapters": reports,
         "stats": summarize(reports),
         "source": state.get("book_url"),
+        "chapter_urls": [u for _t, u in toc],
     }
 
 
-def _read_cache(cache_dir, idx) -> str:
-    p = os.path.join(cache_dir, f"{idx:05d}.txt")
-    try:
-        with open(p, encoding="utf-8") as f:
-            return f.read()
-    except Exception:
-        return ""
+def _read_cache(cache_dir, url, idx) -> str:
+    for name in (chapter_key(url) + ".txt", f"{idx:05d}.txt"):
+        p = os.path.join(cache_dir, name)
+        try:
+            with open(p, encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            continue
+    return ""
 
 
 def mark_short_ones(reports, min_cluster: int = 3) -> None:
@@ -189,7 +196,9 @@ def read_chapter(book: dict, no: int) -> dict | None:
         return None
 
     if book["kind"] == "standard":
-        body = _read_cache(os.path.join(book["path"], "cache"), no - 1)
+        urls = book.get("chapter_urls") or []
+        url = urls[no - 1] if no - 1 < len(urls) else None
+        body = _read_cache(os.path.join(book["path"], "cache"), url, no - 1)
     else:
         fname = [f for f in os.listdir(book["path"]) if f.endswith(".txt")]
         if not fname:

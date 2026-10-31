@@ -278,6 +278,97 @@ def test_legacy_fetcher_signature():
         shutil.rmtree(out, ignore_errors=True)
 
 
+def test_toc_reorder():
+    """站点在目录中间插章 / 互换两章时，缓存正文必须跟着章节走。"""
+    print("\n[8] 目录重排：正文跟着章节走，不串章")
+    out = tmpdir("reorder")
+    book = "https://reorder.example/book/7/"
+    base = [(f"第{i}章", f"https://reorder.example/book/7/{i}.html")
+            for i in range(1, 4)]
+    try:
+        p = Progress(out, book)
+        p.set_book(book, "重排测试", base)
+        for i in range(3):
+            p.write_chapter(i, f"CONTENT-{i}")
+            p.mark_done(i)
+        p.mark_preview(1, "付费章节，只拿到 100 字预览")
+        p.save(force=True)
+
+        # 最前面插入一章（最典型的场景）
+        p2 = Progress(out, book)
+        p2.set_book(book, "重排测试",
+                    [("序章", "https://reorder.example/book/7/0.html")] + base)
+        check("前插一章后第 1 章仍是原第 1 章正文",
+              (p2.read_chapter(1) or "") == "CONTENT-0",
+              repr(p2.read_chapter(1)))
+        check("前插一章后第 3 章仍是原第 3 章正文",
+              (p2.read_chapter(3) or "") == "CONTENT-2",
+              repr(p2.read_chapter(3)))
+        check("新增的序章没有正文", p2.read_chapter(0) is None,
+              repr(p2.read_chapter(0)))
+        check("账本没有把新章记成已完成", 0 not in p2.state["done"],
+              str(p2.state["done"]))
+        check("预览标记跟着章节搬到了下标 2",
+              (p2.state["preview"] or {}).get("2", "").startswith("付费章节"),
+              str(p2.state["preview"]))
+
+        # 两章互换
+        p3 = Progress(out, book)
+        p3.set_book(book, "重排测试", [base[1], base[0]])
+        check("互换后下标 0 是原第 2 章", (p3.read_chapter(0) or "") == "CONTENT-1",
+              repr(p3.read_chapter(0)))
+        check("互换后下标 1 是原第 1 章", (p3.read_chapter(1) or "") == "CONTENT-0",
+              repr(p3.read_chapter(1)))
+        check("互换没有产生丢章", os.path.exists(p3._path(0)) and
+              os.path.exists(p3._path(1)))
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+
+
+def test_failure_budget():
+    """站点整体不可达时，并发模式也必须尽早停手，不能把每章都重试满。"""
+    print("\n[9] 并发失败预算：熔断要真的生效")
+    out = tmpdir("budget")
+
+    class DeadFetcher(fetchers.BaseFetcher):
+        name = "dead"
+        MIN_DELAY = MAX_DELAY = 0
+        calls = []
+
+        def fetch(self, url, quick=False):
+            DeadFetcher.calls.append(url)
+            if url == BOOK:
+                return toc_html(40)
+            raise ConnectionResetError(10054, "远程主机强迫关闭了一个现有的连接")
+
+    fetchers.FETCHERS["dead"] = DeadFetcher
+    try:
+        Engine(BOOK, driver="dead", out_dir=out, workers=4).run()
+        ch_calls = [u for u in DeadFetcher.calls if u != BOOK]
+        check("并发模式没有把 40 章全重试满", len(ch_calls) <= 24,
+              f"实际请求 {len(ch_calls)} 章")
+        p = Progress(out, BOOK)
+        check("熔断没有把整本都记成失败",
+              len(p.state["failed"]) < 40, str(len(p.state["failed"])))
+        check("熔断时没有误记已完成", not p.state["done"], str(p.state["done"]))
+    finally:
+        fetchers.FETCHERS.pop("dead", None)
+        shutil.rmtree(out, ignore_errors=True)
+
+
+def test_cache_naming():
+    """缓存文件名只认两种形态：5 位序号（旧）和 16 位摘要（新）。"""
+    print("\n[10] 缓存文件名识别：纯数字摘要不当成旧序号")
+    from novel_dl.progress import legacy_index
+
+    check("旧式 00002.txt 认成下标 2", legacy_index("00002.txt") == 2,
+          str(legacy_index("00002.txt")))
+    check("摘要恰好全是数字时不当成旧序号",
+          legacy_index("0256661888404515.txt") is None,
+          str(legacy_index("0256661888404515.txt")))
+    check("非 txt 不算", legacy_index("00002.json") is None)
+
+
 def main():
     test_concurrent_completeness()
     test_no_duplicate_requests()
@@ -286,6 +377,9 @@ def main():
     test_state_atomicity()
     test_failure_isolation()
     test_legacy_fetcher_signature()
+    test_toc_reorder()
+    test_failure_budget()
+    test_cache_naming()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for n in FAIL:

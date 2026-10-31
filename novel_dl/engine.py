@@ -9,8 +9,12 @@ from .guard import EncryptedContent
 from .parser import get_parser
 from .progress import Progress
 from .rules import apply_url_fixes, find_rule
+from .textutil import safe_filename
 
 LINE = "=" * 40
+
+CONN_ERROR_MARKERS = ("Connection", "timed out", "Reset", "Max retries",
+                      "SSL", "10054", "10061", "10065")
 
 CHAPTER_LIKE = re.compile(
     r"^(https?://[^/]+/(?:book|books|novel|xiaoshuo)/\d+)/\d+\.html?$")
@@ -40,7 +44,7 @@ class Engine:
             self.fetcher.MAX_DELAY = max(min_delay * 3, min_delay)
         self.fetcher.min_interval = max(0.0, float(min_delay or 0))
         self.parser = get_parser(book_url, fetcher=self.fetcher,
-                                 lazy_auto=auto_detect)
+                                 auto=auto_detect, lazy_auto=True)
         self.prog = Progress(out_dir, book_url)
         self.from_ch, self.to_ch = from_ch, to_ch
         self.max_toc_pages = max_toc_pages
@@ -150,34 +154,56 @@ class Engine:
         return title, toc
 
     def _extend_toc_pages(self, toc: list, html: str) -> list:
-        """目录分页：优先用 <option value> 拿全部页，否则顺着「下一页」跟。"""
+        """目录分页：优先用分页下拉框，否则顺着「下一页」跟。"""
+        from urllib.parse import urljoin
+
         seen = {u for _, u in toc}
-        base_m = re.match(r"(https?://[^/]+)/", self.book_url)
-        options = [u for u in re.findall(r'<option value="([^"]+)"', html) if u != "/"]
+        visited = {self.book_url}
+        options = self._page_options(html)
 
         pages, page_no = [], 2
-        if options and base_m:
-            pages = [base_m.group(1) + u for u in options]
-            pages = [u for u in pages if u.rstrip("/") != self.book_url.rstrip("/")]
+        if options:
+            pages = [urljoin(self.book_url, u) for u in options]
+            pages = [u for u in pages if u not in visited]
             if pages:
                 log.info("目录共约 %d 页，开始逐页抓取…", len(pages) + 1)
-        else:
-            nxt = self._next_toc_page(html)
-            while nxt and nxt not in seen and len(pages) < self.max_toc_pages:
-                pages.append(nxt)
+
+        fetched = {}          # url -> html，避免同一页抓两次
+        if pages:
+            for u in pages[: self.max_toc_pages]:
                 try:
-                    html = self._get(nxt)
+                    fetched[u] = self._get(u)
                 except Exception as e:
                     log.warning("目录翻页失败（%s），使用已获取部分", e)
                     break
-                nxt = self._next_toc_page(html)
+                visited.add(u)
+        else:
+            url, page_html = self.book_url, html
+            while len(pages) < self.max_toc_pages:
+                nxt = self._next_toc_page(page_html, url)
+                if not nxt or nxt in visited:
+                    break                  # 没有下一页，或「下一页」指回自己
+                try:
+                    page_html = self._get(nxt)
+                except Exception as e:
+                    log.warning("目录翻页失败（%s），使用已获取部分", e)
+                    break
+                visited.add(nxt)
+                pages.append(nxt)
+                fetched[nxt] = page_html
+                url = nxt
 
         for nxt in pages[: self.max_toc_pages]:
+            page_html = fetched.get(nxt)
+            if page_html is None:
+                continue
             try:
-                html2 = self._get(nxt)
-                _, more = self.parser.parse_toc(html2, nxt)
+                _, more = self.parser.parse_toc(page_html, nxt)
+            except SystemExit as e:
+                log.warning("目录第 %d 页不是章节列表（%s），停止翻页", page_no, e)
+                break
             except Exception as e:
-                log.warning("目录第 %d 页抓取失败（%s），使用已获取部分", page_no, e)
+                log.warning("目录第 %d 页解析失败（%s），使用已获取部分", page_no, e)
                 break
             fresh = [(t, u) for t, u in more if u not in seen]
             if not fresh:
@@ -191,19 +217,27 @@ class Engine:
         return toc
 
     @staticmethod
-    def _next_toc_page(html: str):
-        """从目录页提取「下一页」链接（同站相对地址会拼成绝对地址）。"""
+    def _page_options(html: str) -> list:
+        """分页下拉框里的页码。章节跳转框（值是章节地址）要排除掉。"""
+        out = []
+        for value in re.findall(r'<option[^>]+value="([^"]+)"', html):
+            v = value.strip()
+            if not v or v == "/":
+                continue
+            if "/" in v.strip("/"):          # 带路径的是章节地址，不是页码
+                continue
+            out.append(v)
+        return out
+
+    @staticmethod
+    def _next_toc_page(html: str, base_url: str = ""):
+        """从目录页提取「下一页」链接，按当前页地址拼成绝对地址。"""
+        from urllib.parse import urljoin
+
         m = re.search(r'<a[^>]+href="([^"]+)"[^>]*>\s*下一页\s*</a>', html)
         if not m:
             return None
-        href = m.group(1)
-        if href.startswith("http"):
-            return href
-        bm = re.search(r"(https?://[^/]+/)", html)
-        if not bm:
-            return None
-        from urllib.parse import urljoin
-        return urljoin(bm.group(1), href)
+        return urljoin(base_url or "", m.group(1))
 
     def _load_backup_toc(self, main_toc: list):
         """备用网址（镜像站）：尽力而为，失败不影响主流程。"""
@@ -276,6 +310,18 @@ class Engine:
         return cands[-1]
 
     # ---------- 主流程 ----------
+    def _drop_empty_prog(self):
+        """GitHub 仓库型站点走专用流程，别在书架里留一个空的账本目录。"""
+        try:
+            if self.prog.state.get("done") or self.prog.state.get("toc"):
+                return
+            if os.listdir(self.prog.cache_dir):
+                return
+            os.rmdir(self.prog.cache_dir)
+            os.rmdir(self.prog.root)
+        except OSError:
+            pass
+
     def run(self) -> str:
         p = self.prog
         resuming = bool(p.state["done"])
@@ -284,6 +330,7 @@ class Engine:
 
         gh = self._try_github_pages()
         if gh is not None:
+            self._drop_empty_prog()
             return gh
 
         title, toc = self.refresh_toc()
@@ -394,10 +441,6 @@ class Engine:
             url = b_url
 
         first_html = html
-        if not self._encryption_checked:
-            from .guard import check_encrypted
-            check_encrypted(html, "", url)
-            self._encryption_checked = True
 
         try:
             c_title, body = self.parser.parse_chapter(html)
@@ -423,6 +466,10 @@ class Engine:
         text = f"{c_title}\n\n{body}"
 
         from .guard import FillerPage, filler_reason, looks_truncated, preview_reason
+        from .guard import check_encrypted
+
+        check_encrypted(first_html, body, url)   # 有的站只加密部分章节
+        self._encryption_checked = True
 
         fr = filler_reason(body)
         if fr:
@@ -467,8 +514,13 @@ class Engine:
         dead.append((i + 1, toc[i][0], str(err)))
         log.warning("  ☠ [%d] %s —— 跳过（%s），已记录在案",
                     i + 1, toc[i][0], str(err)[:80])
-        if any(k in str(err) for k in ("Connection", "timed out", "Reset",
-                                       "Max retries", "SSL", "10054", "10061")):
+        self._bump_streak(stats, err)
+
+    @staticmethod
+    def _bump_streak(stats, err):
+        """连续连接失败计数：用来判断站点/线路整体不可达。"""
+        text = str(err)
+        if any(k in text for k in CONN_ERROR_MARKERS):
             stats["conn_fail_streak"] += 1
         else:
             stats["conn_fail_streak"] = 0
@@ -544,6 +596,7 @@ class Engine:
                             raise
                         except Exception as e:
                             last_error[i] = e
+                            self._bump_streak(stats, e)
                             if quick:
                                 retry.append(i)
                             else:
@@ -585,13 +638,15 @@ class Engine:
                 batch, retry[:] = list(retry), []
                 if run_batch(batch, quick=True) != "ok":
                     break
-            for i in retry:
-                reason = last_error.get(i) or "重试后仍失败"
-                self._record_failure(i, toc, reason, dead, stats)
+
+        for i in retry:                 # 试过但仍没成的章：记下真实原因，下次续传
+            reason = last_error.get(i) or "重试后仍失败"
+            self._record_failure(i, toc, reason, dead, stats)
 
         if status == "circuit_break":
             log.error("\n⛔ 连续 5 章连接失败，判定站点/线路暂时不可达，自动停止。")
             log.error("   进度已保存：网络恢复后重跑同一命令即可续传。")
+            self._explain_failures(dead, len(toc))
 
         p.flush()
         return stats["done_now"], dead
@@ -599,12 +654,18 @@ class Engine:
     # ---------- 合并 TXT ----------
     def export(self, title, toc) -> str:
         p = self.prog
-        safe = (title or "未命名").replace("/", "_").replace("\\", "_")
+        safe = safe_filename(title or "未命名")
         out = os.path.join(os.path.dirname(p.state_path), f"{safe}.txt")
+        total = len(toc)
+        done = sum(1 for i in range(total) if p.is_done(i))
         written = 0
-        with open(out, "w", encoding="utf-8") as f:
+        tmp = out + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             f.write(f"《{title}》\n来源: {self.book_url}\n"
-                    f"导出时间: {time.strftime('%Y-%m-%d %H:%M')}\n\n")
+                    f"导出时间: {time.strftime('%Y-%m-%d %H:%M')}\n")
+            if done < total:
+                f.write(f"状态: 未完成（已下载 {done}/{total} 章）\n")
+            f.write("\n")
             for i, (_, _u) in enumerate(toc):
                 if not p.is_done(i):
                     continue
@@ -618,8 +679,9 @@ class Engine:
                     f.write(f"=== 第{i + 1}章 {head} ===\n\n")
                 f.write(rest.strip() + "\n\n\n")
                 written += 1
+        os.replace(tmp, out)   # 原子替换：崩溃不会留下半本书
         log.info("📦 已合并 %d 章到 TXT：%s", written, out)
         if p.state["failed"]:
-            log.warning("   ⚠ 仍有 %d 章阵亡，下次运行会自动重试它们。",
+            log.warning("   ⚠ 仍有 %d 章失败，下次运行会自动重试它们。",
                         len(p.state["failed"]))
         return out
