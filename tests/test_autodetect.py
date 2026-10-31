@@ -164,6 +164,27 @@ def main():
     check("生成的选择器能唯一定位", len(found) == 1, f"{sel} -> {len(found)}")
     check("唯一选中的就是目标节点", found[0].get_text() == "2", sel)
 
+    print(f"\n{'─'*50}\n[--no-auto 必须关掉推断]")
+    from novel_dl import engine as eng_mod
+    from novel_dl.parser import get_parser
+
+    calls = []
+    orig_detect = autodetect.detect
+
+    def spy(*a, **kw):
+        calls.append(a[0] if a else "?")
+        return orig_detect(*a, **kw)
+
+    autodetect.detect = spy
+    try:
+        get_parser("http://noauto.example/book/1/", fetcher=Fake({}), auto=False)
+        check("关掉自动推断时不调用 detect", not calls, str(calls))
+        get_parser("http://noauto2.example/book/1/", fetcher=Fake({}), auto=True,
+                   lazy_auto=True)
+        check("开启自动推断时交给惰性推断（首屏不猜）", not calls, str(calls))
+    finally:
+        autodetect.detect = orig_detect
+
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for n in FAIL:

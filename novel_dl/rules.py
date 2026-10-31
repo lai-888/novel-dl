@@ -117,3 +117,12 @@ def apply_url_fixes(book_url: str, rule: dict | None) -> str:
 def plain_selector(selector: str) -> str:
     """剥离 so-novel 风格的 `@js:` / `@java:` 后缀，只留 CSS 选择器。"""
     return re.split(r"@(?:js|java):", selector or "", maxsplit=1)[0].strip()
+
+
+class RuleNeedsScript(ValueError):
+    """规则自带 JS 解码脚本，当前引擎执行不了。"""
+
+
+def has_script(value: str) -> bool:
+    """这条规则后缀是否需要执行 JS。"""
+    return bool(re.search(r"@(?:js|java):", value or ""))

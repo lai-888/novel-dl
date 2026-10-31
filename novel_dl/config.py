@@ -1,6 +1,10 @@
 """novel-dl 配置文件。"""
 import os
-import tomllib
+
+try:
+    import tomllib                      # Python 3.11+
+except ModuleNotFoundError:             # Python 3.10
+    import tomli as tomllib
 
 DEFAULTS = {
     "output_dir": "books",

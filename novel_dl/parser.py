@@ -5,7 +5,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 
 from . import log
-from .rules import find_rule, plain_selector
+from .rules import RuleNeedsScript, find_rule, has_script, plain_selector
 from .textutil import body_from, clean_text, strip_invisible, strip_page_mark
 
 PARSERS = {}
@@ -20,6 +20,15 @@ def register_parser(key):
 PUA_PAT = re.compile(r"[\ue000-\uf8ff]")
 
 CHAPTER_URL_PAT = re.compile(r"^(.*?/)\d+\.html?$")
+
+
+def _looks_cipher(text: str) -> bool:
+    """正文几乎不含汉字 —— 多半是 base64 密文而不是小说正文。"""
+    sample = (text or "").strip()
+    if len(sample) < 100:
+        return False
+    cjk = sum(1 for ch in sample if "\u4e00" <= ch <= "\u9fff")
+    return cjk / len(sample) < 0.05
 
 
 class BaseParser:
@@ -83,6 +92,27 @@ class SiteRuleParser(BaseParser):
             toc.reverse()
         return title, toc
 
+    def _apply_filter_tag(self, container, spec: str):
+        """按 filter_tag 删噪声。删得太多就跳过 —— 防止把正文段落整段删光。"""
+        budget = int(len(container.get_text(strip=True)) * 0.5)
+        for tag in spec.split(","):
+            tag = tag.strip()
+            if not tag:
+                continue
+            try:
+                picked = list(container.select(tag))
+            except Exception:
+                continue
+            for el in picked:
+                if el.parent is None:       # 已被前面的选择器删掉
+                    continue
+                size = len(el.get_text(strip=True))
+                if size > budget:
+                    log.warning("规则 filter_tag=%s 会删掉大半正文，已跳过这一条", tag)
+                    continue
+                budget -= size
+                el.decompose()
+
     # ---------- 正文 ----------
     def parse_chapter(self, html):
         rule = self.rule
@@ -98,6 +128,7 @@ class SiteRuleParser(BaseParser):
                 soup.title.get_text(strip=True) if soup.title else "未知章节")
 
         c_sel = plain_selector(rule.get("ch_content", ""))
+        js_encoded = has_script(rule.get("ch_content", ""))
         container = self._select_one(soup, c_sel)
         if container is None:
             log.debug("ch_content 未命中，退回通用正文解析")
@@ -105,15 +136,7 @@ class SiteRuleParser(BaseParser):
 
         for t in container.find_all(["script", "style", "ins"]):
             t.decompose()
-        for tag in (rule.get("filter_tag") or "").split(","):
-            tag = tag.strip()
-            if not tag:
-                continue
-            try:
-                for el in container.select(tag):
-                    el.decompose()
-            except Exception:
-                pass
+        self._apply_filter_tag(container, rule.get("filter_tag") or "")
 
         lines = [ln.strip() for ln in container.get_text("\n").splitlines()]
         body = body_from(lines)
@@ -130,6 +153,10 @@ class SiteRuleParser(BaseParser):
 
         if len(body) < 50:
             raise ValueError("正文过短，疑似解析失败或触发了反爬")
+        if js_encoded and _looks_cipher(body):
+            raise RuleNeedsScript(
+                "这一章的正文是脚本加密的（规则里的 @js: 解码跑不了），"
+                "取回来是密文，不写进 TXT。")
         return title, body
 
     @staticmethod
