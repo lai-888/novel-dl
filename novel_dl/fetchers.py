@@ -1,9 +1,12 @@
 """抓取层 —— 插件化设计。"""
+import atexit
 import inspect
 import os
 import random
 import threading
 import time
+
+from urllib.parse import urlsplit
 
 import requests
 
@@ -123,6 +126,7 @@ class RequestsFetcher(BaseFetcher):
     TIMEOUT = 45
 
     def __init__(self):
+        super().__init__()
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -137,15 +141,19 @@ class RequestsFetcher(BaseFetcher):
             self.session.trust_env = False
         else:
             self.session.trust_env = os.environ.get("NOVEL_DL_PROXY") == "1"
+        self.insecure_hosts = set()    # 证书链不完整的站点，逐个放行
 
     def fetch(self, url: str, quick: bool = False) -> str:
         retries = 1 if quick else self.RETRIES
         last_err = None
         attempt = 0
+        host = urlsplit(url).netloc
         while attempt < retries:
             attempt += 1
             try:
-                r = self.session.get(url, timeout=self.TIMEOUT)
+                r = self.session.get(
+                    url, timeout=self.TIMEOUT,
+                    verify=False if host in self.insecure_hosts else None)
                 r.raise_for_status()
                 if not quick:
                     self.polite_sleep()
@@ -154,11 +162,11 @@ class RequestsFetcher(BaseFetcher):
                 return text
             except Exception as e:
                 last_err = e
-                if "CERTIFICATE_VERIFY_FAILED" in str(e) and self.session.verify is not False:
+                if "CERTIFICATE_VERIFY_FAILED" in str(e) and host not in self.insecure_hosts:
                     import urllib3
                     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                    self.session.verify = False
-                    log.warning("    ⚠ 证书验证失败，已对该站点禁用证书校验后重试")
+                    self.insecure_hosts.add(host)
+                    log.warning("    ⚠ %s 的证书链不完整，只对该站点放行", host)
                     attempt -= 1
                     continue
                 if attempt >= retries:
@@ -206,12 +214,16 @@ class SeleniumFetcher(BaseFetcher):
     WAIT_SELECTOR = None   # 可按站点覆盖：等到某元素出现
     WAIT_SECONDS = 3
 
-    def __init__(self):
+    def __init__(self, proxy: str | None = None):
+        super().__init__()
         try:
             import selenium  # noqa: F401
         except ImportError:
             raise SystemExit(
                 'selenium 模式需要先安装：pip install "novel-dl[selenium]"')
+        self.proxy = (proxy or get_proxy() or "").strip()
+        self._local = threading.local()
+        atexit.register(self.close)
 
     def _build(self):
         from selenium import webdriver
@@ -222,21 +234,38 @@ class SeleniumFetcher(BaseFetcher):
         opts.add_argument("--no-sandbox")
         opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36")
+        if self.proxy:
+            opts.add_argument(f"--proxy-server={self.proxy}")
         return webdriver.Chrome(options=opts)
 
-    def fetch(self, url: str) -> str:
-        driver = self._build()
-        try:
-            driver.get(url)
-            if self.WAIT_SELECTOR:
-                from selenium.webdriver.common.by import By
-                from selenium.webdriver.support.ui import WebDriverWait
-                WebDriverWait(driver, 15).until(
-                    lambda d: d.find_elements(By.CSS_SELECTOR, self.WAIT_SELECTOR))
-            else:
-                time.sleep(self.WAIT_SECONDS)
-            html = driver.page_source
+    def _driver(self):
+        """每个线程复用一个浏览器实例，别每章都起一次 Chrome。"""
+        d = getattr(self._local, "driver", None)
+        if d is None:
+            d = self._build()
+            self._local.driver = d
+        return d
+
+    def close(self):
+        d = getattr(self._local, "driver", None)
+        if d is not None:
+            try:
+                d.quit()
+            except Exception:
+                pass
+            self._local.driver = None
+
+    def fetch(self, url: str, quick: bool = False) -> str:
+        driver = self._driver()
+        driver.get(url)
+        if self.WAIT_SELECTOR:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            WebDriverWait(driver, 15).until(
+                lambda d: d.find_elements(By.CSS_SELECTOR, self.WAIT_SELECTOR))
+        else:
+            time.sleep(self.WAIT_SECONDS)
+        html = driver.page_source
+        if not quick:
             self.polite_sleep()
-            return html
-        finally:
-            driver.quit()
+        return html
