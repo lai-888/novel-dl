@@ -78,7 +78,7 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 测试
 
-`tests/` 下有 10 个断言套件，共 283 项，不依赖 pytest，不联网：
+`tests/` 下有 10 个断言套件，共 303 项，不依赖 pytest，不联网：
 
 ```bash
 python tests/test_all.py    # 单个套件
