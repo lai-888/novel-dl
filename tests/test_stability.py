@@ -9,6 +9,7 @@ import io
 import os
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -32,7 +33,9 @@ def check(name, cond, detail=""):
 
 
 def tmpdir(kind):
-    p = os.path.join(ROOT, "tests", ".tmp", f"{kind}_{uuid.uuid4().hex[:8]}")
+    # 落到系统 TEMP：受限环境里工作区对衍生进程只读
+    p = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                     f"{kind}_{uuid.uuid4().hex[:8]}")
     os.makedirs(p, exist_ok=True)
     return p
 
@@ -171,7 +174,7 @@ def test_crash_recovery():
         e.refresh_toc()
         p = e.prog
         for i in range(30):
-            text, t = e._fetch_chapter(i, p.state["toc"])
+            text, t, _preview = e._fetch_chapter(i, p.state["toc"])
             p.write_chapter(i, text)
             p.mark_done(i)          # 故意不 flush —— 模拟断电
         # 此时磁盘上有 30 个章节文件，账本只落了若干次

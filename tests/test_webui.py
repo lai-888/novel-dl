@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -126,7 +127,9 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{web_port}"
 
-    out = os.path.join(ROOT, "tests", ".tmp", f"web_{uuid.uuid4().hex[:8]}")
+    # 临时目录放系统 TEMP：受限环境里工作区对衍生进程只读
+    out = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                       f"web_{uuid.uuid4().hex[:8]}")
     os.makedirs(out, exist_ok=True)
     webui.OUT_DIR = out
 

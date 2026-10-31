@@ -50,6 +50,33 @@ def detect_font_encryption(html: str, text: str) -> float:
     return pua / len(text)
 
 
+# ---------- 付费章节：只拿到「免费预览」 ----------
+# 另一类「下下来是残缺的」：站点对未订阅用户只返回开头一小段正文。
+# 页面上不报错，下载照样算成功，账本上是已完成的一章 —— 用户读到才发现
+# 只有 130 字。实测若初文学：免费章 1000+ 字，付费章只有 130 字预览。
+#
+# 判据必须两件事同时成立：
+#   1. 正文异常短（正常一章远长于 PREVIEW_MAX）
+#   2. 页面有付费痕迹（章节数据里的 isfree:false，或页面上的购买/余额提示）
+# 只看第 2 条会误伤 —— 免费章的页面同样挂着「充值」「订阅」入口。
+PAYWALL_FLAG = re.compile(r"""isfree["']?\s*[:=]\s*false""", re.I)
+PAYWALL_WORDS = ("购买本章", "余额不足", "订阅本章", "付费章节")
+PREVIEW_MAX = 400
+
+
+def preview_reason(html: str, text: str):
+    """这一章是不是只拿到了「免费预览」；是则返回原因，否则返回 None。"""
+    n = len(text or "")
+    if n >= PREVIEW_MAX:
+        return None
+    h = html or ""
+    if PAYWALL_FLAG.search(h):
+        return f"付费章节，只拿到 {n} 字的免费预览"
+    if any(w in h for w in PAYWALL_WORDS):
+        return f"疑似付费章节，只拿到 {n} 字的预览"
+    return None
+
+
 def sample_of(html: str, width: int = 80) -> str:
     """从 HTML 里取一段「像正文、且占位符最密」的片段做样本。
 

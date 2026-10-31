@@ -184,6 +184,10 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                     STATE["message"] = f"下载完成：《{title}》共 {total} 章"
                 else:
                     STATE["message"] = f"下载完成：《{title}》"
+                prev_n = len(eng.prog.state.get("preview") or {})
+                if prev_n:
+                    # 别让「下载完成」盖住事实：这些章只有免费预览
+                    STATE["message"] += f"（其中 {prev_n} 章只有付费预览）"
         except (SystemExit, KeyboardInterrupt) as e:
             blocked = getattr(eng, "blocked", None)
             if blocked is not None:

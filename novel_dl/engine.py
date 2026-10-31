@@ -384,6 +384,14 @@ class Engine:
             if len(dead) > 20:
                 log.info("   … 其余 %d 章见 state.json", len(dead) - 20)
             self._explain_failures(dead, len(toc))
+        prev_n = len(p.state.get("preview") or {})
+        if prev_n:
+            log.warning("")
+            log.warning("⚠ 有 %d 章只拿到「免费预览」，不是完整正文。", prev_n)
+            log.warning("   这些是站点的付费章节：没订阅就只能取到开头一小段。")
+            log.warning("   书架里会给它们标成「付费预览」，免得你以为下全了。")
+            log.warning("   订阅之后想重下这几章：删掉 book 目录 cache/ 里对应的 "
+                        "NNNNN.txt 再跑同一条命令。")
         return self.export(title, toc)
 
     def _explain_failures(self, dead, total):
@@ -424,7 +432,7 @@ class Engine:
         quick=True 时只试一次（不重试）：并发模式下由引擎负责安排重试，
         否则一个失败章会占住一个线程 20 多秒，其它章节干等。
 
-        返回 (正文文本, 章节标题)。失败抛异常，由调用方决定怎么记账。
+        返回 (正文文本, 章节标题, 预览原因)。失败抛异常，由调用方决定怎么记账。
         """
         chap_title, url = toc[i]
         try:
@@ -441,6 +449,7 @@ class Engine:
         # 字体加密检测：必须在解析**之前**看原始 HTML。
         # 解析时 textutil 会剥掉私有区字符，加密正文会变成「喜喜，喜！」
         # 这种看似通顺实则残缺的东西，清洗后再检测就查不出来了。
+        first_html = html          # 分页循环会改写 html，首页留一份给付费检测用
         if not self._encryption_checked:
             from .guard import check_encrypted
             check_encrypted(html, "", url)   # 命中则抛 EncryptedContent
@@ -459,7 +468,13 @@ class Engine:
             html = self._get(page_url)
             _, body2 = self.parser.parse_chapter(html)
             body += "\n" + body2
-        return f"{c_title}\n\n{body}", c_title
+
+        text = f"{c_title}\n\n{body}"
+
+        # 付费章节检测：未订阅时站点只给开头一小段，页面上不报错。
+        # 不标出来的话，用户在账本上看到的是「已下载」，要读的时候才发现只有 130 字。
+        from .guard import preview_reason
+        return text, c_title, preview_reason(first_html, text)
 
     def _download_loop(self, toc, targets):
         """按 workers 并发抓取。
@@ -471,12 +486,18 @@ class Engine:
             return self._download_serial(toc, targets)
         return self._download_parallel(toc, targets)
 
-    def _record_success(self, i, text, c_title, toc, stats):
+    def _record_success(self, i, text, c_title, toc, stats, preview=None):
         self.prog.write_chapter(i, text)
         self.prog.mark_done(i)
+        if preview:
+            self.prog.mark_preview(i, preview)
+            stats["preview"] = stats.get("preview", 0) + 1
         stats["done_now"] += 1
         stats["conn_fail_streak"] = 0
-        log.info("  ✓ [%d/%d] %s", i + 1, len(toc), c_title)
+        if preview:
+            log.info("  ✓ [%d/%d] %s  ⚠ 仅预览", i + 1, len(toc), c_title)
+        else:
+            log.info("  ✓ [%d/%d] %s", i + 1, len(toc), c_title)
 
     def _record_failure(self, i, toc, err, dead, stats):
         self.prog.mark_failed(i, str(err))
@@ -491,14 +512,14 @@ class Engine:
 
     def _download_serial(self, toc, targets):
         p = self.prog
-        dead, stats = [], {"done_now": 0, "conn_fail_streak": 0}
+        dead, stats = [], {"done_now": 0, "conn_fail_streak": 0, "preview": 0}
         last_target = targets[-1] if targets else None
 
         for i in targets:
             self._gate()
             try:
-                text, c_title = self._fetch_chapter(i, toc)
-                self._record_success(i, text, c_title, toc, stats)
+                text, c_title, preview = self._fetch_chapter(i, toc)
+                self._record_success(i, text, c_title, toc, stats, preview)
             except EncryptedContent:
                 # 字体加密是站点特性，不是这一章的问题：立刻向上抛，整本停下
                 raise
@@ -530,7 +551,7 @@ class Engine:
         from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
         p = self.prog
-        dead, stats = [], {"done_now": 0, "conn_fail_streak": 0}
+        dead, stats = [], {"done_now": 0, "conn_fail_streak": 0, "preview": 0}
         window = max(self.workers * 4, self.workers)
         log.info("⚡ 并发抓取：%d 线程，窗口 %d", self.workers, window)
 
@@ -544,8 +565,8 @@ class Engine:
             i0 = targets[0]
             try:
                 self._gate()
-                text, c_title = self._fetch_chapter(i0, toc)
-                self._record_success(i0, text, c_title, toc, stats)
+                text, c_title, preview = self._fetch_chapter(i0, toc)
+                self._record_success(i0, text, c_title, toc, stats, preview)
                 targets = targets[1:]
             except EncryptedContent:
                 raise
@@ -567,8 +588,8 @@ class Engine:
                     for fut in done_set:
                         i = inflight.pop(fut)
                         try:
-                            text, c_title = fut.result()
-                            self._record_success(i, text, c_title, toc, stats)
+                            text, c_title, preview = fut.result()
+                            self._record_success(i, text, c_title, toc, stats, preview)
                         except EncryptedContent:
                             # 站点级问题，不是这一章的问题：立刻整本停下。
                             # 先撤销尚未开跑的排队任务，别让它们继续浪费请求。

@@ -44,12 +44,13 @@ class Progress:
                 if isinstance(state, dict):
                     state.setdefault("failed", [])
                     state.setdefault("fail_log", {})
+                    state.setdefault("preview", {})
                     return state
             except Exception as e:
                 log.warning("账本损坏，将重建（缓存章节仍在）：%s", e)
         return {"version": STATE_VERSION, "title": None, "book_url": None,
                 "toc": [], "done": [], "failed": [], "fail_log": {},
-                "last_chapter_no": None, "updated_at": None}
+                "preview": {}, "last_chapter_no": None, "updated_at": None}
 
     def set_book(self, book_url, title, toc):
         """记录目录快照，返回「新增章节索引」列表（增量下载的依据）。
@@ -158,6 +159,15 @@ class Progress:
         if flush:
             self.save(force=True)
 
+    def mark_preview(self, idx: int, reason: str):
+        """记下「这一章只拿到免费预览」。
+
+        仍然算已完成 —— 否则每次重跑都会再请求一次，而公开部分永远只有这一段。
+        想把这类章重下一遍（比如订阅之后）：删掉 cache/NNNNN.txt 再跑同一条命令。
+        """
+        self.state.setdefault("preview", {})[str(idx)] = str(reason)[:200]
+        self._dirty = True
+
     def mark_failed(self, idx: int, reason: str, flush: bool = False):
         if idx not in self.state["failed"]:
             self.state["failed"].append(idx)
@@ -232,4 +242,7 @@ class Progress:
             parts.append(f"上次下到第 {last} 章")
         if self.state["failed"]:
             parts.append(f"阵亡 {len(self.state['failed'])} 章")
+        preview = len(self.state.get("preview") or {})
+        if preview:
+            parts.append(f"其中 {preview} 章只有付费预览")
         return "，".join(parts)

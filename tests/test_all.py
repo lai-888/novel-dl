@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -69,12 +70,12 @@ fetchers.FETCHERS["fake"] = FakeFetcher
 
 
 def _tmpdir(prefix):
-    """测试用临时目录：放在本文件同级的 .tmp/ 下，跑完即删。
+    """测试用临时目录：放系统 TEMP，跑完即删。
 
-    不用 tempfile.mkdtemp —— 它创建出来的目录在部分受限环境里
-    不能继续往下建子目录（WinError 5），用普通 makedirs 更稳。
+    不放进仓库目录：受限环境（沙箱 / 只读工作区）里，衍生进程往工作区
+    建目录会被拒绝（WinError 5），而 %TEMP% 始终可写。
     """
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp")
+    base = os.path.join(tempfile.gettempdir(), "novel-dl-tests")
     path = os.path.join(base, f"{prefix}{uuid.uuid4().hex[:8]}")
     os.makedirs(path, exist_ok=True)
     return path

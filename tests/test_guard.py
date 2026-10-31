@@ -9,6 +9,10 @@
 
 产品行为必须是：**抓第一页就认出来，整本拒绝，一个文件都不落。**
 
+同一族问题还有「付费章节」：站点对未订阅用户只返回开头一小段，
+下载照样算成功，账本上写着已完成，用户读的时候才发现只有 130 字。
+那里的产品行为是：**照下，但标出来**，别让「下载完成」盖住事实。
+
 跑：python tests/test_guard.py
 """
 import io
@@ -16,16 +20,17 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from novel_dl import fetchers, log as nlog          # noqa: E402
-from novel_dl.engine import Engine                  # noqa: E402
+from novel_dl import fetchers, library, log as nlog          # noqa: E402
+from novel_dl.engine import Engine                           # noqa: E402
 from novel_dl.guard import (EncryptedContent, check_encrypted,  # noqa: E402
-                            detect_font_encryption, explain)
+                            detect_font_encryption, explain, preview_reason)
 
 nlog.setup()
 logging.getLogger("novel_dl").setLevel(logging.CRITICAL)   # 测试输出保持干净
@@ -107,8 +112,44 @@ fetchers.FETCHERS["fake-enc"] = EncFetcher
 fetchers.FETCHERS["fake-plain"] = PlainFetcher
 
 
+# ---------------------------------------------------------------------------
+# 付费站：正常章全文，付费章只给开头一小段预览
+# ---------------------------------------------------------------------------
+PAY_BOOK = "https://pay.example/book/7/"
+PAY_SHORT = "陆泽说着，从助理手里拿过一份文件，直接拍在旁边的办公桌上，"
+PAY_FLAG = '<script>var meta={"isfree": false}</script>'
+PAY_TIP = '<p class="vip">本章为付费章节，订阅后可读全文</p>'
+
+
+def pay_ch_page(n, paid):
+    body = PAY_SHORT * 2 if paid else GOOD_TEXT * 10
+    extra = (PAY_TIP + PAY_FLAG) if paid else ""
+    return (f'<html><head><title>第{n}章</title></head><body>'
+            f'<h1>第{n}章</h1><div id="content">{body}</div>{extra}</body></html>')
+
+
+class PayFetcher(fetchers.BaseFetcher):
+    name = "fake-pay"
+    MIN_DELAY = MAX_DELAY = 0
+    calls = []
+
+    def fetch(self, url):
+        type(self).calls.append(url)
+        if url == PAY_BOOK:
+            return ('<html><head><title>付费小说_在线阅读</title></head><body>'
+                    + "".join(f'<a href="/book/7/{i}.html">第{i}章</a>'
+                              for i in range(1, 4)) + '</body></html>')
+        n = int(url.split("/")[-1].split(".")[0])
+        self.polite_sleep()
+        return pay_ch_page(n, paid=(n == 3))    # 第 3 章是付费章
+
+
+fetchers.FETCHERS["fake-pay"] = PayFetcher
+
+
 def _tmpdir(prefix):
-    base = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp")
+    """临时目录放系统 TEMP：受限环境里工作区对衍生进程只读。"""
+    base = os.path.join(tempfile.gettempdir(), "novel-dl-tests")
     path = os.path.join(base, f"{prefix}{uuid.uuid4().hex[:8]}")
     os.makedirs(path, exist_ok=True)
     return path
@@ -214,6 +255,47 @@ def main():
     check("正文完整", "提灯走过长街" in body)
     shutil.rmtree(os.path.dirname(out), ignore_errors=True)
 
+    print("\n[8] 付费章节：只拿到免费预览，必须认出来")
+    check("付费标记 + 短正文 → 判定预览",
+          preview_reason(pay_ch_page(9, paid=True), "第9章\n\n" + PAY_SHORT * 2)
+          is not None)
+    check("付费标记 + 完整正文 → 不判预览（免费章页面也挂充值入口）",
+          preview_reason(pay_ch_page(9, paid=True), "第9章\n\n" + GOOD_TEXT * 10)
+          is None)
+    check("普通页 + 短正文 → 不判预览",
+          preview_reason(GOOD_PAGE, "第1章\n\n" + PAY_SHORT) is None,
+          "误报")
+    check("原因里写明字数",
+          "字" in (preview_reason(pay_ch_page(9, paid=True),
+                                  "第9章\n\n" + PAY_SHORT * 2) or ""),
+          str(preview_reason(pay_ch_page(9, paid=True), "第9章\n\n" + PAY_SHORT * 2)))
+
+    print("\n[9] 引擎：预览章照下但记账，且不会每次重跑都重下")
+    out = os.path.join(_tmpdir("pay_"), "books")
+    eng = Engine(PAY_BOOK, driver="fake-pay", out_dir=out)
+    eng.run()
+    st = eng.prog.state
+    check("账本标记了第 3 章是预览", "2" in (st.get("preview") or {}),
+          str(st.get("preview")))
+    check("预览章仍算已完成", 2 in st["done"], str(st["done"]))
+    check("三章都落盘了", _cache_txt(out) == 3, str(_cache_txt(out)))
+    check("TXT 仍导出（部分内容也有价值）",
+          any(f.endswith(".txt") and "cache" not in f for f in _walk(out)),
+          str([os.path.basename(f) for f in _walk(out)]))
+
+    PayFetcher.calls = []
+    Engine(PAY_BOOK, driver="fake-pay", out_dir=out).run()
+    chapters_again = [u for u in PayFetcher.calls if u != PAY_BOOK]
+    check("第二次运行不再请求任何章节", not chapters_again, str(chapters_again))
+
+    book = library.scan(out)[0]
+    by_no = {c["no"]: c for c in book["chapters"]}
+    check("书架把预览章标成 warn", by_no[3]["level"] == "warn", str(by_no[3]))
+    check("书架写明了原因", "付费" in " ".join(by_no[3]["issues"]),
+          str(by_no[3]["issues"]))
+    check("正常章没被误标", by_no[1]["level"] == "ok", str(by_no[1]))
+    shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+
     print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:
@@ -239,6 +321,6 @@ def _walk(root):
 
 if __name__ == "__main__":
     code = main()
-    shutil.rmtree(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".tmp"),
+    shutil.rmtree(os.path.join(tempfile.gettempdir(), "novel-dl-tests"),
                   ignore_errors=True)
     sys.exit(code)

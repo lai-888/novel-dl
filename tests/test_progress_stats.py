@@ -13,6 +13,7 @@ import io
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,7 +62,8 @@ FETCHERS["stat"] = Site
 
 
 def tmpdir():
-    p = os.path.join(r"C:\Users\31383\Desktop\novel-dl\tests\.tmp",
+    # 落到系统 TEMP：受限环境里工作区对衍生进程只读
+    p = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
                      f"stat_{uuid.uuid4().hex[:8]}")
     os.makedirs(p, exist_ok=True)
     return p

@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -79,8 +80,8 @@ def main():
 
     # ------------------------------------------------------------------
     print("\n[7] 书架扫描：标准结构（cache/ + state.json）")
-    root = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        ".tmp", f"lib_{uuid.uuid4().hex[:8]}")
+    root = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                        f"lib_{uuid.uuid4().hex[:8]}")
     book = os.path.join(root, "example.com_book_1")
     cache = os.path.join(book, "cache")
     os.makedirs(cache, exist_ok=True)
@@ -147,6 +148,63 @@ def main():
         titles = [b["title"] for b in books2]
         check("bad 的排在最前", books2[0]["stats"]["bad"] > 0 or
               books2[0]["stats"]["warn"] > 0, str(titles))
+
+        # ------------------------------------------------------------------
+        print("\n[10b] 同一本书里明显偏短的章要标出来")
+        # 真实数据：某站付费章只给 ~130 字预览，免费章 1000+ 字。
+        # 单看那一章是干净中文（判 ok），只有跟全书比才露馅。
+        # 这里造 4 长 + 3 短：短的那一簇要成规模才判，单章偶发短不误报。
+        short_book = os.path.join(root, "short.example_book_2")
+        short_cache = os.path.join(short_book, "cache")
+        os.makedirs(short_cache, exist_ok=True)
+        toc2 = [[f"第{i}章 正文", f"http://x/{i}.html"] for i in range(1, 8)]
+        with open(os.path.join(short_book, "state.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump({"title": "偏短测试书", "book_url": "http://x/book/2/",
+                       "toc": toc2, "done": list(range(7)), "failed": [],
+                       "fail_log": {}, "preview": {}}, f, ensure_ascii=False)
+        for i in range(7):
+            body = GOOD * 20 if i < 4 else GOOD * 2       # 后三章只有两段
+            with open(os.path.join(short_cache, f"{i:05d}.txt"), "w",
+                      encoding="utf-8") as f:
+                f.write(f"第{i + 1}章 正文\n\n{body}")
+        sb = next(b for b in library.scan(root) if b["title"] == "偏短测试书")
+        check("偏短的章被判 warn", sb["chapters"][5]["level"] == "warn",
+              str(sb["chapters"][5]))
+        check("说明了「本书常见 N 字」",
+              "本书常见" in " ".join(sb["chapters"][5]["issues"]),
+              str(sb["chapters"][5]["issues"]))
+        check("正常长度的章不受影响", sb["chapters"][0]["level"] == "ok",
+              str(sb["chapters"][0]))
+        with open(os.path.join(short_book, "state.json"), "r",
+                  encoding="utf-8") as f:
+            st2 = json.load(f)
+        st2["preview"] = {"5": "付费章节，只拿到 120 字的免费预览"}
+        with open(os.path.join(short_book, "state.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump(st2, f, ensure_ascii=False)
+        sb2 = next(b for b in library.scan(root) if b["title"] == "偏短测试书")
+        check("账本标了付费预览时用原有原因",
+              "付费" in " ".join(sb2["chapters"][5]["issues"]),
+              str(sb2["chapters"][5]["issues"]))
+
+        # 正常书（长度有起伏但没有断层）不能误报：真实案例是 2700~20000 字的长篇
+        ok_book = os.path.join(root, "ok.example_book_3")
+        ok_cache = os.path.join(ok_book, "cache")
+        os.makedirs(ok_cache, exist_ok=True)
+        with open(os.path.join(ok_book, "state.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump({"title": "正常起伏书", "book_url": "http://x/book/3/",
+                       "toc": toc2, "done": list(range(7)), "failed": [],
+                       "fail_log": {}, "preview": {}}, f, ensure_ascii=False)
+        for i, mult in enumerate((45, 40, 35, 30, 28, 25, 75)):
+            with open(os.path.join(ok_cache, f"{i:05d}.txt"), "w",
+                      encoding="utf-8") as f:
+                f.write(f"第{i + 1}章 正文\n\n{GOOD * mult}")
+        ob = next(b for b in library.scan(root) if b["title"] == "正常起伏书")
+        check("长度连续起伏的书不误报",
+              all(c["level"] == "ok" for c in ob["chapters"]),
+              str([(c["no"], c["length"], c["level"]) for c in ob["chapters"]]))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
