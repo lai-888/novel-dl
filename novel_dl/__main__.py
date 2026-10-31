@@ -1,12 +1,4 @@
-"""命令行入口。
-
-  全本下载:    python -m novel_dl https://example.com/book/123/
-  指定范围:    python -m novel_dl <url> -f 100 -t 200
-  断点续传:    重复同一条命令即可，已下载章节自动跳过
-  动态网站:    python -m novel_dl <url> --driver selenium
-  被限速:      python -m novel_dl <url> --delay 3
-  自定义规则:  python -m novel_dl <url> --rules my-sites.json
-"""
+"""命令行入口。"""
 import argparse
 import logging
 import sys
@@ -17,10 +9,7 @@ from .fetchers import list_fetchers
 
 
 def _harden_console():
-    """Windows GBK 控制台下 print emoji 会 UnicodeEncodeError 崩溃。
-
-    只放宽 errors 策略：中文照常显示，无法编码的字符降级为 ?。
-    """
+    """Windows GBK 控制台下 print emoji 会 UnicodeEncodeError 崩溃。"""
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(errors="replace")
@@ -91,7 +80,6 @@ def main(argv=None):
         proxy=args.proxy or cfg.get("proxy"),
     )
     engine.run()
-
 
 if __name__ == "__main__":
     main()

@@ -1,24 +1,10 @@
-"""站点规则：加载、合并、按域名匹配。
-
-设计约定（这也是本项目的立身之本）：
-    程序自身不内置任何具体网站的规则。
-    规则由使用者自己放在 JSON 文件里，本项目只提供格式和解析实现。
-
-搜索顺序（先找到的同 host 规则优先，后加载的补充）：
-    1. 环境变量 NOVEL_DL_RULES 指向的 JSON 文件（可多个，用 os.pathsep 分隔）
-    2. 当前工作目录下的 sites.json
-    3. 用户配置目录 ~/.novel-dl/sites.json
-    4. 包目录内的 sites.json（如果你想把规则直接塞进安装目录）
-
-规则字段见 docs/RULES.md。
-"""
+"""站点规则：加载、合并、按域名匹配。"""
 import json
 import os
 import re
 
 from . import log
 
-# 允许的字段——未知字段会被原样保留（向前兼容），这里只用于文档与校验提示
 KNOWN_FIELDS = {
     "host", "name", "url", "toc_item", "toc_desc", "ch_title", "ch_content",
     "filter_txt", "filter_tag", "next_page", "url_fix", "encoding",
@@ -102,7 +88,6 @@ def find_rule(book_url: str) -> dict | None:
         if host == h or host.endswith("." + h):
             return r
 
-    # 兜底：主域相同也算（规则写 xxx.com，访问的是 www.xxx.com）
     domain = ".".join(host.split(".")[-2:])
     if domain:
         for r in rules:
@@ -113,10 +98,7 @@ def find_rule(book_url: str) -> dict | None:
 
 
 def apply_url_fixes(book_url: str, rule: dict | None) -> str:
-    """按规则的 url_fix 纠正用户贴错的目录页网址。
-
-    url_fix 形如 [[正则, 替换], ...]，依次 re.sub。
-    """
+    """按规则的 url_fix 纠正用户贴错的目录页网址。"""
     if not rule or not rule.get("url_fix"):
         return book_url
     for pair in rule["url_fix"]:
@@ -133,9 +115,5 @@ def apply_url_fixes(book_url: str, rule: dict | None) -> str:
 
 
 def plain_selector(selector: str) -> str:
-    """剥离 so-novel 风格的 `@js:` / `@java:` 后缀，只留 CSS 选择器。
-
-    这类规则依赖页面里执行 JS 解密，本项目不做（也不该做）——
-    但至少要能退化到「按选择器取原始文本」，而不是让非法 CSS 把整章炸掉。
-    """
+    """剥离 so-novel 风格的 `@js:` / `@java:` 后缀，只留 CSS 选择器。"""
     return re.split(r"@(?:js|java):", selector or "", maxsplit=1)[0].strip()

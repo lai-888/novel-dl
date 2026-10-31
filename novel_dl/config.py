@@ -1,32 +1,15 @@
-"""novel-dl 配置文件。
-
-优先级：命令行参数 > 环境变量 > 配置文件 > 内置默认值。
-
-配置文件位置（第一个存在的即生效）：
-    ./novel-dl.toml
-    ~/.novel-dl/config.toml
-
-示例：
-    output_dir  = "books"
-    driver      = "requests"
-    delay       = 0.5
-    workers     = 4
-    rules_files = ["my-sites.json"]
-"""
+"""novel-dl 配置文件。"""
 import os
 import tomllib
 
 DEFAULTS = {
     "output_dir": "books",
     "driver": "requests",
-    # 保守默认：2 线程 + 1 秒间隔。这个组合对绝大多数站点都不会触发限流。
-    # 想要更快可以自己调大 workers / 调小 delay，但要承担被封 IP 的风险。
     "delay": 1.0,
     "workers": 2,
     "rules_files": [],
     "max_pages": 200,
     "timeout": 45,
-    # 代理：直连被站点前面的 CDN 重置时填，例如 "http://127.0.0.1:7890"
     "proxy": None,
 }
 

@@ -1,20 +1,4 @@
-"""字体加密站拦截 —— 专项测试。
-
-用户诉求：「下载了 178 章，全是缺字的正文，但我不知道」。
-
-这类站点（如番茄小说）把常用汉字替换成私有区码位（U+E4xx），
-只有浏览器加载它专用字体才显示正常。程序拿到的是占位符，
-解析时还会被清洗掉，于是正文变成「“喜喜，喜！”」——看着通顺，
-实则缺一半字，比乱码更危险。
-
-产品行为必须是：**抓第一页就认出来，整本拒绝，一个文件都不落。**
-
-同一族问题还有「付费章节」：站点对未订阅用户只返回开头一小段，
-下载照样算成功，账本上写着已完成，用户读的时候才发现只有 130 字。
-那里的产品行为是：**照下，但标出来**，别让「下载完成」盖住事实。
-
-跑：python tests/test_guard.py
-"""
+"""字体加密站拦截 —— 专项测试。"""
 import io
 import json
 import logging
@@ -44,9 +28,7 @@ def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
     print(("  ✅ " if cond else "  ❌ ") + name + ("" if cond else f"  <- {detail}"))
 
-
 # ---------------------------------------------------------------------------
-# 样板：真实番茄站正文的形状（私有区占位符 + @font-face）
 # ---------------------------------------------------------------------------
 FONT_FACE = ('<style>@font-face{font-family:DNMrHsV173Pd4pgy;'
              'src:url(https://lf6-awef.bytetos.com/obj/awesome-font/c/x.woff2)'
@@ -60,20 +42,16 @@ def enc_page(n=1):
             f'<h1>第{n}章</h1><div id="content">'
             + PUA_LINE * 100 + '</div></body></html>')
 
-
 GOOD_TEXT = "夜色沉沉，他提灯走过长街，远处传来打更的声音。风从巷口灌进来，吹得灯焰一阵摇晃。"
 GOOD_PAGE = ('<html><head><title>第1章</title></head><body><h1>第1章</h1>'
              '<div id="content">' + GOOD_TEXT * 12 + '</div></body></html>')
 
-# 只用图标字体的普通站点：@font-face 有，但私有区字符只出现在几个图标里
 ICON_PAGE = ('<html><head><title>第1章</title><style>@font-face{'
              'font-family:iconfont;src:url(/icon.woff2)}</style></head><body>'
              '<span class="ico">\ue600\ue601\ue602</span><div id="content">'
              + GOOD_TEXT * 12 + '</div></body></html>')
 
-
 # ---------------------------------------------------------------------------
-# 假站点（两种：加密站 / 正常站）
 # ---------------------------------------------------------------------------
 BOOK = "https://enc.example/book/9/"
 PLAIN_BOOK = "https://plain.example/book/9/"
@@ -109,13 +87,10 @@ class PlainFetcher(fetchers.BaseFetcher):
         self.polite_sleep()
         return GOOD_PAGE
 
-
 fetchers.FETCHERS["fake-enc"] = EncFetcher
 fetchers.FETCHERS["fake-plain"] = PlainFetcher
 
-
 # ---------------------------------------------------------------------------
-# 付费站：正常章全文，付费章只给开头一小段预览
 # ---------------------------------------------------------------------------
 PAY_BOOK = "https://pay.example/book/7/"
 PAY_SHORT = "陆泽说着，从助理手里拿过一份文件，直接拍在旁边的办公桌上，"
@@ -145,12 +120,9 @@ class PayFetcher(fetchers.BaseFetcher):
         self.polite_sleep()
         return pay_ch_page(n, paid=(n == 3))    # 第 3 章是付费章
 
-
 fetchers.FETCHERS["fake-pay"] = PayFetcher
 
-
 # ---------------------------------------------------------------------------
-# 半截正文 / 占位页：同一章第一次只给一小段，再要一次才给全文
 # ---------------------------------------------------------------------------
 SHORT_BOOK = "https://short.example/book/5/"
 SHORT_TEASER = "杭晚抱着言溯怀哭了很久，哭到晕乎乎的，似乎都忘了他还在她身体里"
@@ -187,7 +159,6 @@ class ShortFetcher(fetchers.BaseFetcher):
             return short_page(2, FILLER_TEXT)
         return short_page(3, GOOD_TEXT * 40)
 
-
 fetchers.FETCHERS["fake-short"] = ShortFetcher
 
 
@@ -208,8 +179,9 @@ def _cache_txt(out_dir):
             total += len([f for f in os.listdir(cache) if f.endswith(".txt")])
     return total
 
-
 # ---------------------------------------------------------------------------
+
+
 def main():
     print("\n[1] 检测函数：加密正文必须认出来")
     try:
@@ -219,9 +191,6 @@ def main():
         check("加密页 → 抛出 EncryptedContent", True)
         check("说明里给出可读原因", "字体" in explain(e), explain(e)[:60])
 
-    # 加密站页面里通常还预加载了下一章的 JSON（\u003Cp\u003E…），
-    # 那里的占位符密度最高，但那是转义代码。样本必须挑像正文的那一段，
-    # 否则用户看到的是一串 "\u003Cp\u003E???，????"。
     json_line = ('\\u003Cp\\u003E' + PUA_LINE * 20 + '\\u003C\\u002Fp\\u003E')
     noisy = (f'<html><head><title>t</title>{FONT_FACE}</head><body>'
              f'<script>var c={{"content":"{json_line}"}}</script>'
@@ -241,8 +210,6 @@ def main():
     check("占比为 0", detect_font_encryption(GOOD_PAGE, GOOD_TEXT * 12) == 0.0)
 
     print("\n[3] 清洗后仍残留占位符的正文")
-    # 解析器已剥掉占位符时，正文里没有 PUA —— 所以主判据看原始 HTML。
-    # 但若某个解析器没剥干净，次判据要能兜住。
     dirty = PUA_LINE * 20 + GOOD_TEXT * 3
     try:
         check_encrypted("", dirty, BOOK)
@@ -398,7 +365,6 @@ def _walk(root):
     for dirpath, _dirs, files in os.walk(root):
         found.extend(os.path.join(dirpath, f) for f in files)
     return found
-
 
 if __name__ == "__main__":
     code = main()

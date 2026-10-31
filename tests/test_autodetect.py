@@ -1,26 +1,13 @@
-"""自动推断站点规则 —— 专项测试。
-
-核心主张：给一个没见过的站点，程序能自己推出选择器并验证它可用。
-
-用多种「长得完全不同的」假站点来证明这一点：
-  1. dl/dd 列表（老式小说站）
-  2. ul/li 列表 + 无 id、纯 class
-  3. table 布局（更老的站）
-  4. div 堆叠 + 嵌套容器
-
-跑：python tests/test_autodetect.py
-"""
+"""自动推断站点规则 —— 专项测试。"""
 import io
 import os
 import sys
 import tempfile
 
-# 路径跟着仓库走，不要写死本机绝对路径（否则别人 clone 下来跑不起来）
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-# 推断缓存别写到真实用户目录（只读环境/CI 会失败），测试用临时文件
 os.environ["NOVEL_DL_CACHE"] = os.path.join(
     tempfile.gettempdir(), "novel-dl-tests", "learned.json")
 
@@ -58,10 +45,10 @@ def _pages(base, toc_html, ch_html, first_href):
     from urllib.parse import urljoin
     return {base: toc_html, urljoin(base, first_href): ch_html}
 
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# 四种结构的站点（每个返回 (pages, 期望最少章数)）
-# ---------------------------------------------------------------------------
+
 def site_dl(base):
     """老式 dl/dd 列表。"""
     toc = ("<html><head><title>甲站_在线阅读</title></head><body>"
@@ -184,7 +171,6 @@ def main():
         return 1
     print("✅ 自动推断全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

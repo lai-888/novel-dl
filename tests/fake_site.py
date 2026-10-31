@@ -1,13 +1,10 @@
-"""本地假小说站：用于端到端验证 novel-dl 命令。
-
-    python tests/fake_site.py   # 监听 127.0.0.1:8765
-目录: /book/1/   章节: /book/1/N.html （第3章故意写坏）
-"""
+"""本地假小说站：用于端到端验证 novel-dl 命令。"""
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 TOC = ('<html><head><title>测试小说_在线阅读</title></head><body>' +
        ''.join(f'<a href="/book/1/{i}.html">第{i}章 夜行{i}</a>' for i in range(1, 7)) +
        '</body></html>')
+
 
 def chapter(n):
     body = ('<html><head><title>第{n}章 夜行{n}</title></head><body><h1>第{n}章 夜行{n}</h1>'
@@ -15,6 +12,7 @@ def chapter(n):
     if n == 3:  # 坏章节：正文过短，按失败跳过
         body = '<html><body><div id="content">短</div></body></html>'
     return body
+
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):

@@ -1,14 +1,4 @@
-"""脱机端到端测试：不联网，用假 HTML 跑完整条链路。
-
-覆盖：
-  1. 首轮下载（含一个必失败章节）→ 跳过失败章 + 合并 TXT
-  2. 重跑同命令 → 断点续传（不重复请求）+ 重试失败章 + 增量下载新章
-  3. 账本 state.json 的完整性
-  4. 站点规则：Web 规则解析、@js 后缀退化、坏选择器不炸
-  5. URL 纠错：章节页 → 目录页
-
-运行：python tests/test_all.py        （不依赖 pytest）
-"""
+"""脱机端到端测试：不联网，用假 HTML 跑完整条链路。"""
 import io
 import json
 import os
@@ -35,9 +25,7 @@ def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
     print(("  ✅ " if cond else "  ❌ ") + name + ("" if cond else f"  <- {detail}"))
 
-
 # ---------------------------------------------------------------------------
-# 假站点
 # ---------------------------------------------------------------------------
 CH_HTML = ('<html><head><title>第{n}章 测试章节{n}</title></head><body>'
            '<h1>第{n}章 测试章节{n}</h1>'
@@ -65,25 +53,20 @@ class FakeFetcher(fetchers.BaseFetcher):
         self.polite_sleep()
         return BAD_CH_HTML if n in self.fail_once else CH_HTML.format(n=n)
 
-
 fetchers.FETCHERS["fake"] = FakeFetcher
 
 
 def _tmpdir(prefix):
-    """测试用临时目录：放系统 TEMP，跑完即删。
-
-    不放进仓库目录：受限环境（沙箱 / 只读工作区）里，衍生进程往工作区
-    建目录会被拒绝（WinError 5），而 %TEMP% 始终可写。
-    """
+    """测试用临时目录：放系统 TEMP，跑完即删。"""
     base = os.path.join(tempfile.gettempdir(), "novel-dl-tests")
     path = os.path.join(base, f"{prefix}{uuid.uuid4().hex[:8]}")
     os.makedirs(path, exist_ok=True)
     return path
 
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# 1 + 2：续传 / 增量 / 跳过 / 合并
-# ---------------------------------------------------------------------------
+
 def test_resume_and_increment():
     print("\n[1] 首轮下载 + 断点续传 + 增量更新")
     out = os.path.join(_tmpdir("out_"), "books")
@@ -113,9 +96,7 @@ def test_resume_and_increment():
     finally:
         shutil.rmtree(out, ignore_errors=True)
 
-
 # ---------------------------------------------------------------------------
-# 3：站点规则
 # ---------------------------------------------------------------------------
 RULE_HTML_TOC = ('<html><head><title>规则小说_全本</title></head><body>'
                  '<dl class="list">'
@@ -157,7 +138,6 @@ def test_site_rules():
         check("按 host 命中规则",
               (rules.find_rule("https://rule.example/read/1/") or {}).get("name") == "规则站")
 
-        # 规则解析器
         p = parser.get_parser("https://rule.example/read/1/")
         check("get_parser 选中规则解析器", p.name.startswith("rule:"), p.name)
         title, toc = p.parse_toc(RULE_HTML_TOC, "https://rule.example/read/1/")
@@ -167,7 +147,6 @@ def test_site_rules():
         check("广告/噪声被过滤", "小主" not in body and "广告" not in body, body[:60])
         check("正文长度合理", len(body) > 50, str(len(body)))
 
-        # 坏规则：非法 CSS + @js 后缀，不得抛异常
         pb = parser.get_parser("https://broken.example/book/1/")
         try:
             t2, toc2 = pb.parse_toc(RULE_HTML_TOC, "https://broken.example/book/1/")
@@ -194,10 +173,10 @@ def test_site_rules():
         rules.load_rules(force=True)
         shutil.rmtree(tmp, ignore_errors=True)
 
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# 4：URL 纠错
-# ---------------------------------------------------------------------------
+
 def test_url_fixes():
     print("\n[3] 网址纠错")
     fixed = Engine._coerce_toc_url("https://x.example/book/6334/833155.html")
@@ -211,8 +190,9 @@ def test_url_fixes():
     out = rules.apply_url_fixes("https://m.ex.com/book/88/9.html", rule)
     check("规则 url_fix 生效", out == "https://www.ex.com/book/88/", out)
 
-
 # ---------------------------------------------------------------------------
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -224,7 +204,6 @@ def main():
         return 1
     print("✅ 全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,15 +1,4 @@
-"""限速与封禁防护 —— 专项测试。
-
-起因：用户用 4 并发下某站整本书，58 章全部失败。
-根因：并发下没有任何跨线程限速，4 线程 = 4 倍请求频率，被站点封 IP。
-
-本测试确保：
-  1. 并发时限速真的生效（实测请求间隔 >= 设定值）
-  2. 串行模式仍保留原有的礼貌延迟
-  3. 大量失败时会给出「可能被封」的可执行建议
-
-跑：python tests/test_ratelimit.py
-"""
+"""限速与封禁防护 —— 专项测试。"""
 import io
 import os
 import sys
@@ -68,7 +57,6 @@ class RateSite(BaseFetcher):
             return toc_html(N)
         n = url.split("/")[-1].split(".")[0]
         return ch_html(n)
-
 
 FETCHERS["rate"] = RateSite
 
@@ -175,7 +163,6 @@ def main():
         return 1
     print("✅ 限速与封禁防护全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

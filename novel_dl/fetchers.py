@@ -1,13 +1,4 @@
-"""抓取层 —— 插件化设计。
-
-所有抓取器实现同一个接口：
-    fetch(url) -> str  (返回页面 HTML 文本)
-
-通过注册表按名字切换：
-    python -m novel_dl <url> --driver selenium
-
-新增抓取策略 = 新增一个类 + 一行注册，不动任何其他代码。
-"""
+"""抓取层 —— 插件化设计。"""
 import inspect
 import os
 import random
@@ -21,10 +12,6 @@ from .encoding import decode_body
 
 FETCHERS = {}
 
-# 全局代理设置（--proxy / NOVEL_DL_PROXY_URL）。
-# 为什么需要它：不少站点挂在 Cloudflare 后面，国内直连会被重置
-# （ConnectionResetError 10054 / SSL unexpected eof），而浏览器因为走了
-# 系统代理所以能打开 —— 用户看到的现象就是「浏览器能看，程序下不了」。
 _PROXY: str | None = None
 
 
@@ -42,7 +29,7 @@ def get_proxy() -> str | None:
 
 def register(name):
     def deco(cls):
-        FETCHERS[name] = cls  # 只存类，懒实例化：未装 selenium 也不影响导入
+        FETCHERS[name] = cls
         return cls
     return deco
 
@@ -60,33 +47,19 @@ def list_fetchers() -> list[str]:
 class BaseFetcher:
     name = "base"
 
-    # —— 礼貌性延迟（反爬的最小尊重，也可被 --delay 覆盖）——
     MIN_DELAY = 0.5
     MAX_DELAY = 1.5
 
-    # —— 外部控制（网页暂停/停止按钮注入）——
     stop_event = None
     pause_event = None
 
     def __init__(self):
-        # 全局限速：所有线程共享同一个「上次请求时刻」。
-        # 只在每个线程里 sleep 是不够的 —— 4 个线程各自等待，实际速率仍是
-        # 4 倍。必须有一个跨线程的节流点，才能保证真正的请求频率。
-        # 注意：节流点在 BaseFetcher.pace() 里，由**引擎**统一调用；
-        # 不放在 fetch() 内部，是为了让第三方 fetcher 也无法绕过它。
         self._pace_lock = threading.Lock()
         self._last_request = 0.0
         self.min_interval = 0.0        # 由引擎按 --delay 设置
 
     def pace(self):
-        """把「相邻两次请求的最小间隔」落实到所有线程上。
-
-        引擎在每次调用 fetch 之前调用本方法。写在引擎侧的好处：
-        即使 fetcher 子类重写了 fetch，也不会绕过限速。
-
-        容错：第三方 fetcher 若没调用 super().__init__()，
-        这里惰性补上节流状态，而不是抛 AttributeError。
-        """
+        """把「相邻两次请求的最小间隔」落实到所有线程上。"""
         if getattr(self, "_pace_lock", None) is None:
             self._pace_lock = threading.Lock()
             self._last_request = 0.0
@@ -102,10 +75,7 @@ class BaseFetcher:
             self._last_request = time.monotonic()
 
     def gate_wait(self, seconds: float):
-        """等待 seconds 秒，期间实时响应暂停/停止。
-
-        停止 → 立即 SystemExit；暂停 → 阻塞到恢复（恢复后继续本次等待）。
-        """
+        """等待 seconds 秒，期间实时响应暂停/停止。"""
         end = time.time() + seconds
         while True:
             if self.stop_event is not None and self.stop_event.is_set():
@@ -125,15 +95,7 @@ class BaseFetcher:
         self.gate_wait(random.uniform(self.MIN_DELAY, self.MAX_DELAY))
 
     def fetch(self, url: str, quick: bool = False) -> str:
-        """抓取页面。
-
-        quick=True：只请求一次，不重试。用于并发模式——单个线程不该为了
-        一章卡 20 秒，重试交给引擎统一安排（见 engine._download_parallel）。
-
-        兼容性说明：第三方 fetcher 只要实现 fetch(url) 即可。本方法会探测
-        它是否支持 quick 参数，不支持就退回调用 fetch(url)，不让新增参数
-        变成破坏性变更。
-        """
+        """抓取页面。"""
         raise NotImplementedError
 
     def fetch_compat(self, url: str, quick: bool = False) -> str:
@@ -151,6 +113,8 @@ class BaseFetcher:
 
 
 @register("requests")
+
+
 class RequestsFetcher(BaseFetcher):
     """默认驱动：requests + 会话复用 + 指数退避重试。"""
 
@@ -167,15 +131,11 @@ class RequestsFetcher(BaseFetcher):
             "Accept-Language": "zh-CN,zh;q=0.9",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
-        # 代理：显式指定时全程走代理（含 quick 模式，否则并发下载会全部被重置）；
-        # 没指定就退回「默认直连」，直连被反复重置时 fetch() 里还有一次兜底。
         proxy = get_proxy()
         if proxy:
             self.session.proxies = {"http": proxy, "https": proxy}
-            self.session.trust_env = False        # 别让系统代理覆盖显式设置
+            self.session.trust_env = False
         else:
-            # 系统代理（Clash 等）常把国内小站的连接掐掉；默认直连更稳。
-            # 想让整个会话都走系统代理：NOVEL_DL_PROXY=1
             self.session.trust_env = os.environ.get("NOVEL_DL_PROXY") == "1"
 
     def fetch(self, url: str, quick: bool = False) -> str:
@@ -189,15 +149,11 @@ class RequestsFetcher(BaseFetcher):
                 r.raise_for_status()
                 if not quick:
                     self.polite_sleep()
-                # 编码交给 encoding.decode_body 统一处理：
-                # requests 的 apparent_encoding 对短中文页经常猜错
                 text, used = decode_body(r.content, r.encoding or "")
                 log.debug("编码 %s -> %s", r.encoding, used)
                 return text
             except Exception as e:
                 last_err = e
-                # 证书链不完整（Windows 信任但 Python CA 库缺中间证书）：
-                # 对该会话关闭校验后重试，不消耗重试次数
                 if "CERTIFICATE_VERIFY_FAILED" in str(e) and self.session.verify is not False:
                     import urllib3
                     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -213,14 +169,11 @@ class RequestsFetcher(BaseFetcher):
                 self.gate_wait(wait)
 
         if quick:
-            # 并发模式：不在单个线程里死磕，立刻抛给引擎，腾出线程
             raise ConnectionError(f"请求失败: {url} ({last_err})")
 
-        # 最后手段：直连被重置时改走系统代理再试 1 次
         alt = requests.Session()
         alt.headers.update(self.session.headers)
         if self.session.proxies:
-            # 已经显式指定过代理还失败，说明代理本身不通，再试也没意义
             raise ConnectionError(
                 f"重试 {self.RETRIES} 次仍失败（代理 {list(self.session.proxies.values())[0]}）"
                 f": {url} ({last_err})")
@@ -238,25 +191,16 @@ class RequestsFetcher(BaseFetcher):
 
     @classmethod
     def _backoff(cls, attempt: int) -> float:
-        """指数退避 + 抖动。
-
-        抖动（jitter）很关键：并发抓取时，多个线程会同时收到限流响应，
-        如果退避时间完全相同，它们会同时重试 —— 这在站点看来就是攻击，
-        反而延长被封时间。加 0~50% 随机量把重试打散。
-
-        上限也从 10s 降到 6s：章节失败后由引擎记账、下次运行重试，
-        没必要在单次运行里死磕。
-        """
+        """指数退避 + 抖动。"""
         base = min(2 ** attempt, 6)
         return base * (0.75 + random.random() * 0.5)
 
 
 @register("selenium")
-class SeleniumFetcher(BaseFetcher):
-    """插件驱动：处理 JS 动态加载 / 需要等待渲染的网站。
 
-    依赖: pip install "novel-dl[selenium]"
-    """
+
+class SeleniumFetcher(BaseFetcher):
+    """插件驱动：处理 JS 动态加载 / 需要等待渲染的网站。"""
 
     name = "selenium"
     WAIT_SELECTOR = None   # 可按站点覆盖：等到某元素出现

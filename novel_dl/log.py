@@ -1,7 +1,4 @@
-"""统一日志：库里只输出到 logging，不在核心模块里 print。
-
-好处：CLI 可以用 StreamHandler 打到控制台，webui 可以把同一份日志喂进网页。
-"""
+"""统一日志：库里只输出到 logging，不在核心模块里 print。"""
 import logging
 
 log = logging.getLogger("novel_dl")

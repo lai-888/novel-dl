@@ -1,12 +1,4 @@
-"""解析层 —— 站点解析器的插件化。
-
-优先级：
-  1. 站点规则（rules.py 加载的 JSON，命中即用规则里的选择器）
-  2. PARSERS 里注册的专用解析器（乱序/字体加密等特殊站）
-  3. 通用启发式解析器（目录页找 <a>，正文页找最大文本容器）
-
-扩展方式：写一个 BaseParser 子类，用 @register_parser("域名片段") 注册即可。
-"""
+"""解析层 —— 站点解析器的插件化。"""
 import re
 from urllib.parse import urljoin
 
@@ -25,11 +17,8 @@ def register_parser(key):
         return cls
     return deco
 
-
-# 目录标题里的图标字体字符（「第X章」被替换成私有区字符 U+E000–U+F8FF）
 PUA_PAT = re.compile(r"[\ue000-\uf8ff]")
 
-# 章节 URL 形态：「前缀 + 数字 + .html」
 CHAPTER_URL_PAT = re.compile(r"^(.*?/)\d+\.html?$")
 
 
@@ -124,7 +113,6 @@ class SiteRuleParser(BaseParser):
                 for el in container.select(tag):
                     el.decompose()
             except Exception:
-                # filter_tag 写错不该毁掉整章
                 pass
 
         lines = [ln.strip() for ln in container.get_text("\n").splitlines()]
@@ -157,6 +145,8 @@ class SiteRuleParser(BaseParser):
 
 
 @register_parser("generic")
+
+
 class GenericParser(BaseParser):
     """通用启发式：适合大多数静态小说站。"""
 
@@ -187,10 +177,7 @@ class GenericParser(BaseParser):
         return t
 
     def _chapter_links_by_url(self, soup, base_url):
-        """按 URL 形态聚类识别章节链接（标题被图标字体混淆时的兜底）。
-
-        统计「同一前缀 + 数字.html」的链接数，取最多的前缀。
-        """
+        """按 URL 形态聚类识别章节链接（标题被图标字体混淆时的兜底）。"""
         from collections import Counter
         cands = Counter()
         parsed = []
@@ -258,7 +245,6 @@ class GenericParser(BaseParser):
         inside_ids = {id(a) for a, _, _ in links
                       if any(p is best_node for p in a.parents)}
 
-        # 容器内按 <dt>/<hr> 分段：主列表是最大段，「最新章节」块作为补充挪到最后
         segments, cur = [], []
         for el in best_node.descendants:
             if el.name in ("dt", "hr"):
@@ -294,10 +280,7 @@ class GenericParser(BaseParser):
 
     @staticmethod
     def _reorder(toc: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """目录常是「最新章节(倒序) + 正文列表(正序)」拼接，也可能整体倒序。
-
-        用章节 URL 末尾数字的走向还原阅读顺序。
-        """
+        """目录常是「最新章节(倒序) + 正文列表(正序)」拼接，也可能整体倒序。"""
         nums = []
         for _, u in toc:
             m = re.search(r"(\d+)\.html?$", u) or re.search(r"/(\d+)/?$", u)
@@ -325,7 +308,6 @@ class GenericParser(BaseParser):
         title = h.get_text(strip=True) if h else (
             soup.title.get_text(strip=True) if soup.title else "未知章节")
 
-        # 很多站把「书名_3.第3章 XXX_最新章节免费阅读_站名」整串塞进 h1
         parts = [p.strip() for p in re.split(r"[_|］】]", title) if p.strip()]
         noise = re.compile(r"最新章节|免费阅读|无弹窗|笔趣阁|小说网|全文阅读| txt |txt下载", re.I)
         chap_pat = re.compile(r"^(第)?[0-9零一二三四五六七八九十百千]+[.、〕]?")
@@ -374,16 +356,7 @@ class GenericParser(BaseParser):
 
 def get_parser(book_url: str, fetcher=None, auto: bool = True,
                lazy_auto: bool = False):
-    """选择解析器，优先级：
-
-        1. 手写的站点规则（sites.json）—— 最可靠，人工确认过
-        2. 之前自动推断并验证通过的规则（缓存）
-        3. 通用启发式解析器 —— 兜底
-
-    lazy_auto=True 时**不**在这里做现场推断，而是返回一个延迟推断的包装器：
-    先用通用解析器跑，只有在它失败时才去推断。这样对能直接解析的站点
-    不会浪费任何额外请求（推断本身要抓目录页 + 一个章节页）。
-    """
+    """选择解析器，优先级："""
     rule = find_rule(book_url)
     if rule:
         return SiteRuleParser(rule)
@@ -394,7 +367,6 @@ def get_parser(book_url: str, fetcher=None, auto: bool = True,
             return p
 
     if auto and fetcher is not None:
-        # 先看缓存：有就直接用，零额外请求
         try:
             from .autodetect import load_learned
             learned = load_learned(host.split(":")[0])
@@ -418,10 +390,7 @@ def get_parser(book_url: str, fetcher=None, auto: bool = True,
 
 
 class _LazyAutoParser:
-    """先用通用解析；通用解析失败时才去推断站点结构。
-
-    目的：不给「本来就能解析」的站点增加任何请求开销。
-    """
+    """先用通用解析；通用解析失败时才去推断站点结构。"""
 
     name = "generic+auto"
 
@@ -449,7 +418,6 @@ class _LazyAutoParser:
         try:
             return self._generic.parse_toc(html, base_url)
         except SystemExit:
-            # 通用解析都找不到章节链接 → 这才值得花请求去推断
             rp = self._try_detect()
             if rp is not None:
                 return rp.parse_toc(html, base_url)

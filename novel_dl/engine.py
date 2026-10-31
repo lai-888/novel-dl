@@ -1,11 +1,4 @@
-"""下载引擎：目录解析 → 增量对比 → 逐章抓取 → 失败记账 → 合并 TXT。
-
-引擎只负责流程，不负责「怎么抓」和「怎么解析」：
-    抓取策略  -> fetchers.py 的插件
-    解析策略  -> parser.py 的插件 / 站点规则
-    进度账本  -> progress.py
-所有输出都走 log，唯一例外是章节完成的进度提示（webui 会把它当状态源）。
-"""
+"""下载引擎：目录解析 → 增量对比 → 逐章抓取 → 失败记账 → 合并 TXT。"""
 import os
 import re
 import time
@@ -19,8 +12,6 @@ from .rules import apply_url_fixes, find_rule
 
 LINE = "=" * 40
 
-# 「/book/123/456.html」这类章节页 → 猜回目录页 /book/123/。
-# 只认这几个常见路径词，宁可猜不到也不要把目录页改坏。
 CHAPTER_LIKE = re.compile(
     r"^(https?://[^/]+/(?:book|books|novel|xiaoshuo)/\d+)/\d+\.html?$")
 
@@ -47,8 +38,6 @@ class Engine:
         if min_delay is not None:
             self.fetcher.MIN_DELAY = min_delay
             self.fetcher.MAX_DELAY = max(min_delay * 3, min_delay)
-        # 跨线程限速：并发时也保证请求之间的最小间隔。
-        # 不设这个的话，4 线程等于把频率放大 4 倍，很容易被站点封。
         self.fetcher.min_interval = max(0.0, float(min_delay or 0))
         self.parser = get_parser(book_url, fetcher=self.fetcher,
                                  lazy_auto=auto_detect)
@@ -56,11 +45,9 @@ class Engine:
         self.from_ch, self.to_ch = from_ch, to_ch
         self.max_toc_pages = max_toc_pages
         self.workers = max(1, int(workers or 1))
-        # 目录解析完成后回调 (书名, 章节总数)。webui 靠它显示「共 N 章」，
-        # 否则在网络慢/全部已下载的情况下总数会一直停在 0。
         self.on_toc = on_toc
         self._encryption_checked = False   # 字体加密只检测一次（首章）
-        self.blocked = None                # 被拦下的原因（EncryptedContent 实例）
+        self.blocked = None
         self.backup_url = (backup_url or "").strip() or None
         self.backup_toc = None
         self.stop_event = stop_event
@@ -73,11 +60,7 @@ class Engine:
     # ---------- 网址纠错 ----------
     @staticmethod
     def _coerce_toc_url(url: str) -> str:
-        """用户常直接贴某一章的网址，这里猜回目录页。
-
-        只对 /book/123/456.html 这类「纯数字书 ID」形态生效，
-        避免误伤 /read-1.html 这种本身就是目录的站点。
-        """
+        """用户常直接贴某一章的网址，这里猜回目录页。"""
         m = CHAPTER_LIKE.match(url)
         if not m:
             return url
@@ -104,12 +87,7 @@ class Engine:
 
     # ---------- 目录 ----------
     def _try_github_pages(self):
-        """如果是 GitHub 仓库型站点，就地下载并返回结果；否则返回 None。
-
-        先看 URL 是否是 *.github.io —— 只有这类才值得为检测多抓一次页面。
-        普通站点直接返回 None，不产生任何额外请求。
-        """
-        # 注意：必须只取到第一个斜杠为止，否则路径会混进 host
+        """如果是 GitHub 仓库型站点，就地下载并返回结果；否则返回 None。"""
         m = re.match(r"https?://([^/:]+)", self.book_url or "")
         host = m.group(1).lower() if m else ""
         is_pages_host = host.endswith(".github.io") or host == "github.io"
@@ -145,7 +123,6 @@ class Engine:
             pause_event=self.pause_event,
             on_toc=on_toc_cb,
         )
-        # 返回值统一是 TXT 路径；多本时给第一个
         return paths[0] if paths else ""
 
     def refresh_toc(self) -> tuple[str, list]:
@@ -173,10 +150,7 @@ class Engine:
         return title, toc
 
     def _extend_toc_pages(self, toc: list, html: str) -> list:
-        """目录分页：优先用 <option value> 拿全部页，否则顺着「下一页」跟。
-
-        上限 max_toc_pages，防止站点给出无穷页码把程序拖死。
-        """
+        """目录分页：优先用 <option value> 拿全部页，否则顺着「下一页」跟。"""
         seen = {u for _, u in toc}
         base_m = re.match(r"(https?://[^/]+)/", self.book_url)
         options = [u for u in re.findall(r'<option value="([^"]+)"', html) if u != "/"]
@@ -267,11 +241,7 @@ class Engine:
     # ---------- 章节内分页 ----------
     @staticmethod
     def _is_next_page(cur: str, nxt: str) -> bool:
-        """合法的下一页 = 当前 URL 的分页序号 +1。
-
-        支持 /ID-2 与 /ID_2 两种写法，忽略 .html 后缀；
-        跳到下一章、外部站、广告页都判为 False。
-        """
+        """合法的下一页 = 当前 URL 的分页序号 +1。"""
         def norm(u: str) -> str:
             u = u.split("?")[0].split("#")[0].rstrip("/")
             return re.sub(r"\.html?$", "", u)
@@ -284,11 +254,7 @@ class Engine:
 
     @staticmethod
     def _next_page_link(html: str, base_url: str = ""):
-        """提取 (下一页URL, 链接文字)。
-
-        有的站点同一页上有多个 id=next_url 的链接（一个是「上一页」），
-        所以收集全部候选后，优先返回真正构成「当前页 +1」的那个。
-        """
+        """提取 (下一页URL, 链接文字)。"""
         from bs4 import BeautifulSoup
         from urllib.parse import urljoin
 
@@ -316,9 +282,6 @@ class Engine:
         if resuming:
             log.info("📖 发现历史进度 —— %s", p.summary())
 
-        # —— 先判断是不是 GitHub 仓库型站点 ——
-        # 这类站点的页面上没有任何章节链接，正文也不在 HTML 里，
-        # 走通用流程必然失败，所以要在解析目录之前分流。
         gh = self._try_github_pages()
         if gh is not None:
             return gh
@@ -339,14 +302,9 @@ class Engine:
         lo = (self.from_ch - 1) if self.from_ch else 0
         hi = min(self.to_ch, len(toc)) if self.to_ch else len(toc)
 
-        # 账本是批量落盘的，断电后可能落后于磁盘：先按缓存文件补齐记录，
-        # 否则会把已经下好的章节再请求一遍。
         p.recover_from_disk()
         targets = [i for i in range(lo, hi) if not p.is_done(i)]
 
-        # 目录已确定 —— 立刻把总数报给上层。
-        # 不等 mark_done：全部章节都已下载时不会再有 mark_done 调用，
-        # 界面上的总数就会一直是 0（「显示共 0 章却下了很多章」的成因）。
         if self.on_toc is not None:
             try:
                 self.on_toc(title, len(toc), len(p.state.get("done", [])),
@@ -363,9 +321,8 @@ class Engine:
             log.info("\n⏹ 已停止：%s（进度已保存，重跑同命令可续传）", e)
             done_now, dead = 0, []
         except EncryptedContent as e:
-            # 字体加密站：立刻停，不产出任何无效文件
             from .guard import explain
-            self.blocked = e      # 给上层（webui）取用，好显示同样的说明
+            self.blocked = e
             log.error("")
             log.error("=" * 52)
             log.error("这个网站无法下载")
@@ -398,10 +355,7 @@ class Engine:
         return self.export(title, toc)
 
     def _explain_failures(self, dead, total):
-        """失败时给出可执行的原因判断，而不是只说「失败」。
-
-        最常见的是被站点限流/封禁，用户看到「全失败」却不知道该怎么办。
-        """
+        """失败时给出可执行的原因判断，而不是只说「失败」。"""
         if not dead or total <= 0:
             return
         ratio = len(dead) / total
@@ -421,22 +375,12 @@ class Engine:
             log.error("   可以试试：novel-dl <网址> --driver selenium")
 
     def _get(self, url: str, quick: bool = False) -> str:
-        """统一抓取入口：先限速，再抓。
-
-        所有网络请求都必须经过这里 —— 限速点集中在引擎侧，
-        任何 fetcher 实现（包括第三方插件）都无法绕过。
-        """
+        """统一抓取入口：先限速，再抓。"""
         self.fetcher.pace()
         return self.fetcher.fetch_compat(url, quick=quick)
 
     def _fetch_chapter(self, i, toc, quick=False):
-        """抓取并解析单章。纯函数式：不改任何共享状态，供并发调用。
-
-        quick=True 时只试一次（不重试）：并发模式下由引擎负责安排重试，
-        否则一个失败章会占住一个线程 20 多秒，其它章节干等。
-
-        返回 (正文文本, 章节标题, 预览原因)。失败抛异常，由调用方决定怎么记账。
-        """
+        """抓取并解析单章。纯函数式：不改任何共享状态，供并发调用。"""
         chap_title, url = toc[i]
         try:
             html = self._get(url, quick=quick)
@@ -449,21 +393,15 @@ class Engine:
             html = self._get(b_url, quick=quick)
             url = b_url
 
-        # 字体加密检测：必须在解析**之前**看原始 HTML。
-        # 解析时 textutil 会剥掉私有区字符，加密正文会变成「喜喜，喜！」
-        # 这种看似通顺实则残缺的东西，清洗后再检测就查不出来了。
-        first_html = html          # 分页循环会改写 html，首页留一份给付费检测用
+        first_html = html
         if not self._encryption_checked:
             from .guard import check_encrypted
-            check_encrypted(html, "", url)   # 命中则抛 EncryptedContent
+            check_encrypted(html, "", url)
             self._encryption_checked = True
 
         try:
             c_title, body = self.parser.parse_chapter(html)
         except Exception as e_short:
-            # 站点有时第一次只给半截正文（实测同一章 170 字 / 1500 字），
-            # 解析器会把这种结果判成「正文过短」。补抓一次再解析，
-            # 仍不行就照原样抛出去（那是真的解析失败）。
             if "过短" not in str(e_short):
                 raise
             log.info("    ↺ 解析出的正文过短，再请求一次")
@@ -471,7 +409,6 @@ class Engine:
             first_html = html
             c_title, body = self.parser.parse_chapter(html)
 
-        # 章节内分页跟随（/ID、/ID-2、/ID_2 …），上限 30 页
         page_url, pages = url, 1
         while pages < 30:
             nxt = self._next_page_link(html, page_url)
@@ -487,14 +424,10 @@ class Engine:
 
         from .guard import FillerPage, filler_reason, looks_truncated, preview_reason
 
-        # 占位页：不是正文，判失败让引擎按失败重试/记账
         fr = filler_reason(body)
         if fr:
             raise FillerPage(fr)
 
-        # 半截正文：同一章第一次请求只回 170 字、再要一次就 1500 字（实测某站
-        # 的防采集策略）。单个分页都没有、结尾又不像说完一句话时，补抓一次，
-        # 谁长用谁 —— 这比事后再让用户重下便宜得多。
         if pages == 1 and looks_truncated(body):
             log.info("    ↺ 正文只有 %d 字且未收尾，再请求一次", len(body))
             try:
@@ -508,16 +441,10 @@ class Engine:
             except Exception as e:
                 log.debug("补抓失败（保留第一次的结果）：%s", e)
 
-        # 付费章节检测：未订阅时站点只给开头一小段，页面上不报错。
-        # 不标出来的话，用户在账本上看到的是「已下载」，要读的时候才发现只有 130 字。
         return text, c_title, preview_reason(first_html, text)
 
     def _download_loop(self, toc, targets):
-        """按 workers 并发抓取。
-
-        并发安全的关键：抓取/解析是纯的（不碰共享状态），落盘和记账回到
-        主线程串行做。章节正文每章立刻写盘，账本按批次落盘。
-        """
+        """按 workers 并发抓取。"""
         if self.workers <= 1:
             return self._download_serial(toc, targets)
         return self._download_parallel(toc, targets)
@@ -557,7 +484,6 @@ class Engine:
                 text, c_title, preview = self._fetch_chapter(i, toc)
                 self._record_success(i, text, c_title, toc, stats, preview)
             except EncryptedContent:
-                # 字体加密是站点特性，不是这一章的问题：立刻向上抛，整本停下
                 raise
             except Exception as e:
                 self._record_failure(i, toc, e, dead, stats)
@@ -572,18 +498,7 @@ class Engine:
         return stats["done_now"], dead
 
     def _download_parallel(self, toc, targets):
-        """并发抓取，串行落盘。
-
-        两阶段设计（这是并发下不被「坏章拖死」的关键）：
-          阶段 1 —— 每题只试一次（quick），失败立即跳过并记入 retry 列表。
-                    这样线程池不会被某个卡住的章节占住 20 秒。
-          阶段 2 —— 所有章节扫完后，对 retry 列表做少量轮次的重试，
-                    轮次之间整体等待，天然带退避。
-
-        用「滑动窗口」而不是一次性提交全部：窗口大小 = workers * 4，
-        既能喂饱线程池，又不会因为几千个任务导致内存膨胀，
-        也保证停止信号能及时生效。
-        """
+        """并发抓取，串行落盘。"""
         from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
         p = self.prog
@@ -594,9 +509,6 @@ class Engine:
         retry = []
         last_error = {}          # 每章最后一次的真实异常，用于最终记账
 
-        # 字体加密站预检：先同步跑第一章。
-        # 命中就整本停在上马之前 —— 否则并发窗口已经起飞，会先落下几个
-        # 半残的章节文件，用户看到的就是「下了几十章，全是缺字的正文」。
         if targets and not self._encryption_checked:
             i0 = targets[0]
             try:
@@ -627,15 +539,12 @@ class Engine:
                             text, c_title, preview = fut.result()
                             self._record_success(i, text, c_title, toc, stats, preview)
                         except EncryptedContent:
-                            # 站点级问题，不是这一章的问题：立刻整本停下。
-                            # 先撤销尚未开跑的排队任务，别让它们继续浪费请求。
                             for f in inflight:
                                 f.cancel()
                             raise
                         except Exception as e:
                             last_error[i] = e
                             if quick:
-                                # 阶段 1：先记账但不判死，留给阶段 2 重试
                                 retry.append(i)
                             else:
                                 self._record_failure(i, toc, e, dead, stats)
@@ -666,9 +575,6 @@ class Engine:
 
         status = run_batch(targets, quick=True)
 
-        # 阶段 2：统一重试。
-        # 全程保持 quick —— 退避由引擎在「轮次之间」统一控制，而不是在
-        # 单个线程里 sleep，这样即使只有 1 个失败章，也不会拖住整批的收尾。
         if retry and status == "ok":
             for rnd, wait_s in enumerate((0.8, 2.0, 4.0), start=1):
                 if not retry:
@@ -679,9 +585,6 @@ class Engine:
                 batch, retry[:] = list(retry), []
                 if run_batch(batch, quick=True) != "ok":
                     break
-            # 还没成功的，如实记账。
-            # 原因要保留最后一次的真实异常 —— 只写「重试后仍失败」会让
-            # 用户（和开发者）完全不知道是 403、超时还是解析失败。
             for i in retry:
                 reason = last_error.get(i) or "重试后仍失败"
                 self._record_failure(i, toc, reason, dead, stats)

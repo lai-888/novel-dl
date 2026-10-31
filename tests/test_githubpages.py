@@ -1,17 +1,4 @@
-"""GitHub Pages 型站点（Markdown 仓库）—— 专项测试。
-
-这类站点和传统小说站完全不同：
-  页面上没有章节链接，内容不在 HTML 里，而是一堆 Markdown 文件。
-
-要验证的核心点：
-  1. 能从页面识别出仓库配置
-  2. 中文数字章号能正确转成排序键（第二 < 第十章 < 第十九章）
-  3. GitHub 返回的乱序能被纠正
-  4. Markdown 清理不破坏正文
-  5. ZW_META 注释能被剥离
-
-跑：python tests/test_githubpages.py
-"""
+"""GitHub Pages 型站点（Markdown 仓库）—— 专项测试。"""
 import io
 import os
 import sys
@@ -160,7 +147,6 @@ code fence
         return 1
     print("✅ GitHub Pages 站点处理全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

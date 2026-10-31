@@ -1,10 +1,4 @@
-"""内容质检 + 书架 + 章节预览 —— 专项测试。
-
-用户诉求：「下载好了但其实是乱码，用户却不知道」。
-所以这里的重点是**脏数据必须被认出来**，健康数据不能被误报。
-
-跑：python tests/test_library.py
-"""
+"""内容质检 + 书架 + 章节预览 —— 专项测试。"""
 import io
 import json
 import os
@@ -27,9 +21,7 @@ def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
     print(("  ✅ " if cond else "  ❌ ") + name + ("" if cond else f"  <- {detail}"))
 
-
 GOOD = "夜色沉沉，他提灯走过长街，远处传来打更的声音。风从巷口灌进来，吹得灯焰一阵摇晃。"
-# 实测到的两种真实乱码样本
 GARBLE_ECM = "νêΘνè§νë†οΦ¨ν£Ξν™Ξνë‰νêΕψÄ²δΦëφ¹·νêΕνë¥νëâνê²οΦ¨ν£öνêΘνè§γîöνêûνî΄εΩΒψÄ²"
 GARBLE_GBK = "ÚŤĚšüźÚŽć´╝îţĹŹÚÖóŃÇéţÉÇţô╝ňĄĽÚś│ţöĽŔÉŻ´╝îţĺëŔ║»Šî║Šőö"
 
@@ -151,9 +143,6 @@ def main():
 
         # ------------------------------------------------------------------
         print("\n[10b] 同一本书里明显偏短的章要标出来")
-        # 真实数据：某站付费章只给 ~130 字预览，免费章 1000+ 字。
-        # 单看那一章是干净中文（判 ok），只有跟全书比才露馅。
-        # 这里造 4 长 + 3 短：短的那一簇要成规模才判，单章偶发短不误报。
         short_book = os.path.join(root, "short.example_book_2")
         short_cache = os.path.join(short_book, "cache")
         os.makedirs(short_cache, exist_ok=True)
@@ -188,7 +177,6 @@ def main():
               "付费" in " ".join(sb2["chapters"][5]["issues"]),
               str(sb2["chapters"][5]["issues"]))
 
-        # 正常书（长度有起伏但没有断层）不能误报：真实案例是 2700~20000 字的长篇
         ok_book = os.path.join(root, "ok.example_book_3")
         ok_cache = os.path.join(ok_book, "cache")
         os.makedirs(ok_cache, exist_ok=True)
@@ -220,7 +208,6 @@ def main():
         return 1
     print("✅ 质检与书架全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

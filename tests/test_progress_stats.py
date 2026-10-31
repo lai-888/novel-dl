@@ -1,14 +1,4 @@
-"""进度统计专项测试。
-
-起因：用户报告「显示共 0 章，但实际下了很多章节」。
-根因：total 只在 mark_done 里更新。若目录解析后没有任何新章节需要下载
-（全部已下过 / 网络慢时先跳过了统计），total 就永远停在 0。
-
-这类 bug 不会让下载失败，只是界面数字错 —— 所以必须专门断言，
-不能靠功能测试顺带覆盖。
-
-跑：python tests/test_progress_stats.py
-"""
+"""进度统计专项测试。"""
 import io
 import os
 import shutil
@@ -57,12 +47,10 @@ class Site(BaseFetcher):
         n = url.split("/")[-1].split(".")[0]
         return ch_html(n)
 
-
 FETCHERS["stat"] = Site
 
 
 def tmpdir():
-    # 落到系统 TEMP：受限环境里工作区对衍生进程只读
     p = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
                      f"stat_{uuid.uuid4().hex[:8]}")
     os.makedirs(p, exist_ok=True)
@@ -144,7 +132,6 @@ def main():
         return 1
     print("✅ 进度统计全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

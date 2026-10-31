@@ -1,16 +1,4 @@
-"""novel-dl Web 控制台 —— 双击 bat 自动打开，在网页上操作下载。
-
-用法：
-    python webui.py              # 启动并自动打开浏览器
-    python webui.py --no-open    # 只启动不打开浏览器
-    python webui.py --port 8766
-
-零额外依赖：标准库 http.server + 原生 fetch。
-下载任务在后台线程执行，页面轮询 /api/status 实时显示进度；
-关掉网页不影响下载，关掉本进程则停止。
-
-安全边界：只监听 127.0.0.1，没有鉴权，也没有上传/执行任意代码的接口。
-"""
+"""novel-dl Web 控制台 —— 双击 bat 自动打开，在网页上操作下载。"""
 import argparse
 import json
 import logging
@@ -30,7 +18,6 @@ from novel_dl.engine import Engine
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "books")
 
 # ---------------------------------------------------------------------------
-# 全局单任务状态（自用工具，一次跑一本书足够；状态即日志）
 # ---------------------------------------------------------------------------
 STATE_LOCK = threading.Lock()
 STATE = {
@@ -41,7 +28,7 @@ STATE = {
     "message": "待命中",
     "lines": [],          # 控制台输出（最近 400 行）
     "done": 0, "total": 0,
-    "failed": [],         # [[章节号, 标题, 原因]]
+    "failed": [],
     "result_txt": None,
     "started_at": None,
     "finished_at": None,
@@ -64,9 +51,6 @@ class _StateHandler(logging.Handler):
         except Exception:
             pass
 
-
-# 内部术语 → 用户看得懂的说法。
-# 日志本身保留原文（排查问题要用），只在送到界面时翻译一遍。
 _TRANSLATE = [
     ("阵亡名单", "没下载成功的章节"),
     ("阵亡", "失败"),
@@ -88,7 +72,6 @@ _TRANSLATE = [
 def _humanize(msg: str) -> str:
     for a, b in _TRANSLATE:
         msg = msg.replace(a, b)
-    # 去掉因替换产生的多余空格
     return " ".join(msg.split()) if len(msg) < 120 else msg
 
 
@@ -97,14 +80,7 @@ def log(msg):
 
 
 def resolve_out_dir(path: str | None) -> str:
-    """把用户填的保存位置变成绝对路径。
-
-    规则：
-      · 留空 → 默认（项目下的 books/）
-      · 相对路径 → 相对「桌面」解释会反直觉，所以一律相对当前工作目录
-      · 支持 ~ 展开；末尾斜杠无所谓
-    不校验是否存在 —— 不存在会自动创建，这是用户想要的方便。
-    """
+    """把用户填的保存位置变成绝对路径。"""
     if not path or not str(path).strip():
         return OUT_DIR
     p = os.path.expanduser(str(path).strip().strip('"').strip("'"))
@@ -158,7 +134,6 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
             def md(idx):
                 orig_done(idx)
                 with STATE_LOCK:
-                    # total 由 on_toc 定下，这里只推进 done，避免两者互相覆盖
                     STATE["done"] = len(prog.state["done"])
 
             def mf(idx, reason):
@@ -184,14 +159,10 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                     STATE["message"] = f"下载完成：《{title}》"
                 prev_n = len(eng.prog.state.get("preview") or {})
                 if prev_n:
-                    # 别让「下载完成」盖住事实：这些章只有免费预览
                     STATE["message"] += f"（其中 {prev_n} 章只有付费预览）"
         except (SystemExit, KeyboardInterrupt) as e:
             blocked = getattr(eng, "blocked", None)
             if blocked is not None:
-                # 字体加密站：不是「停止」，是根本没有可下载的正文。
-                # 必须说清原因，否则用户会反复重试同一个必败的网址。
-                # 也不能导出 TXT —— 导出只会得到一个空文件，那正是要避免的「假成功」。
                 from novel_dl.guard import explain
                 for line in explain(blocked).splitlines():
                     log(line)
@@ -227,10 +198,7 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
 
     threading.Thread(target=worker, daemon=True).start()
 
-
 from novel_dl.ui_page import PAGE
-
-
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -238,8 +206,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        # 本地服务，页面和接口都不该被缓存：
-        # 否则改完代码后浏览器还拿着旧页面，看起来像「改动没生效」。
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
@@ -274,7 +240,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"count": len(rs), "sources": rules.rule_sources()})
 
         elif route == "/api/books":
-            # 书架：扫描输出目录，逐章带质检结论
             with STATE_LOCK:
                 root = STATE.get("out_dir") or OUT_DIR
             try:
@@ -364,8 +329,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True})
 
         if self.path == "/api/opendir":
-            # 在资源管理器里打开目录。可传 {path} 指定某本书的目录，
-            # 不传则打开当前保存位置。
             req = {}
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -377,7 +340,6 @@ class Handler(BaseHTTPRequestHandler):
             if not d:
                 with STATE_LOCK:
                     d = STATE.get("out_dir") or OUT_DIR
-            # 只允许打开输出目录之下的路径，避免被当成任意路径打开器
             with STATE_LOCK:
                 root = os.path.abspath(STATE.get("out_dir") or OUT_DIR)
             target = os.path.abspath(d)
@@ -430,7 +392,6 @@ def lan_addresses() -> list[str]:
     """列出本机在局域网里的 IP，给手机访问用。"""
     import socket
     ips = []
-    # 主出口 IP（连一个不存在的外部地址不会真的发包，只为让系统选路由）
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0.2)
@@ -441,7 +402,6 @@ def lan_addresses() -> list[str]:
             s.close()
     except Exception:
         pass
-    # 兜底：遍历主机名解析出的地址
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ip = info[4][0]
@@ -461,7 +421,6 @@ def main():
     a = ap.parse_args()
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # 日志双写：控制台 + logs/webui.log（闪退也有据可查）
     nlog.setup(logging.INFO)
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -470,7 +429,6 @@ def main():
     nlog.log.addHandler(fh)
     nlog.log.addHandler(_StateHandler())
 
-    # --lan 时监听所有网卡，否则只监听本机
     bind = "0.0.0.0" if a.lan else "127.0.0.1"
     srv = None
     for port in range(a.port, a.port + 10):
@@ -502,7 +460,6 @@ def main():
         srv.serve_forever()
     except KeyboardInterrupt:
         nlog.info("已退出（下载中断；缓存章节保留，下次继续）")
-
 
 if __name__ == "__main__":
     main()

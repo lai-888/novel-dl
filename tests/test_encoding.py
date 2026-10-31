@@ -1,12 +1,4 @@
-"""编码与乱码处理专项测试。
-
-覆盖三类乱码来源：
-  1. 服务端编码声明错误 / 缺失
-  2. 声明 gb2312/gbk 但实际是 gb18030 超集内容
-  3. 图标字体混淆（私有区字符）、零宽字符、替换字符
-
-跑：python tests/test_encoding.py
-"""
+"""编码与乱码处理专项测试。"""
 import io
 import os
 import sys
@@ -25,7 +17,6 @@ PASS, FAIL = [], []
 def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
     print(("  ✅ " if cond else "  ❌ ") + name + ("" if cond else f"  <- {detail}"))
-
 
 CN = "第一章 少年提着灯走过长街，夜色沉沉。"
 
@@ -106,7 +97,6 @@ def main():
         return 1
     print("✅ 编码与乱码处理全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,15 +1,4 @@
-"""页面结构与主题。
-
-用户要「有风格的 UI」，且参考图是深色 + 金线 + 几何纹样。
-但这是工具，不是游戏启动器 —— 纹样必须克制，只用于分隔和边框，
-不能抢内容的视觉重心。
-
-做法：不依赖外部图片，全部用 CSS 生成质感：
-  · 底纹：多重 radial-gradient 模拟你参考图里的颗粒/尘埃
-  · 金线：linear-gradient + mask 做出「两端渐隐」的细线
-  · 边框：双层 border + 角标伪元素
-这样零图片、零请求，且在任何屏幕密度下都清晰。
-"""
+"""页面结构与主题。"""
 
 THEME_CSS = r"""
 /* ============ 设计令牌 ============ */
@@ -148,6 +137,7 @@ button{font-family:inherit}
 .dot-warn{background:var(--warn)}
 .dot-bad{background:var(--bad)}
 .dot-pending{background:var(--text-2)}
+
 
 @media (prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important}

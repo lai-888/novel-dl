@@ -1,12 +1,4 @@
-"""网页界面：书架页 + 新建下载页 + 章节预览。
-
-三块内容：
-  1. 书架（首页）—— 已下载的书，每本书可展开成章节列表
-  2. 新建（第二页）—— 粘贴网址、设置参数、开始下载
-  3. 预览 —— 点任意章节，右侧（手机上是全屏）滑出正文
-
-每章带质检标记：正常 / 需留意 / 有问题。用户不用打开 TXT 就知道哪章坏了。
-"""
+"""网页界面：书架页 + 新建下载页 + 章节预览。"""
 from .ui_theme import THEME_CSS
 
 PAGE = """<!doctype html>
@@ -48,6 +40,8 @@ __THEME__
 /* ---- 页面切换 ---- */
 .page{display:none}
 .page.on{display:block;animation:pageIn .28s ease}
+
+
 @keyframes pageIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* ================= 书架 ================= */
@@ -232,6 +226,8 @@ details.adv[open]>summary::before{transform:rotate(45deg)}
 .p-nav .btn{flex:1;min-height:40px;font-size:13px}
 
 /* ================= 手机 ================= */
+
+
 @media (max-width:640px){
   .top{flex-wrap:wrap;gap:12px}
   .brand{margin-right:0;width:100%}

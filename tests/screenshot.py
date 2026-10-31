@@ -1,9 +1,4 @@
-"""给网页界面截图，用于肉眼检查排版。
-
-用 Chrome / Edge 的 headless 截图，无需额外依赖。
-
-跑：python tests/screenshot.py [输出路径]
-"""
+"""给网页界面截图，用于肉眼检查排版。"""
 import io
 import os
 import subprocess
@@ -77,7 +72,6 @@ def main():
         return 0
     print("截图失败")
     return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

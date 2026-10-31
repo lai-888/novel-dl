@@ -1,15 +1,4 @@
-"""本地基准测试：量化「性能」到底慢在哪，以及优化后快了多少。
-
-完全离线：起一个本地 HTTP 服务模拟小说站，可以注入延迟和失败率。
-
-跑：
-    python tests/bench.py                 # 基准（逐章串行）
-    python tests/bench.py --workers 4     # 并发 4
-    python tests/bench.py --delay-ms 50   # 模拟每章 50ms 网络延迟
-    python tests/bench.py --chapters 300  # 章节数
-
-输出每一项的耗时分解，方便定位瓶颈。
-"""
+"""本地基准测试：量化「性能」到底慢在哪，以及优化后快了多少。"""
 import argparse
 import os
 import shutil
@@ -64,7 +53,6 @@ class Handler(BaseHTTPRequestHandler):
             n = self.path.rstrip('.html').split('/')[-1]
             if not n.isdigit():
                 self.send_response(404); self.end_headers(); return
-            # 失败率：用于测重试是否真的生效
             if Handler.fail_rate and (int(n) % max(1, int(1 / Handler.fail_rate)) == 0):
                 self.send_response(503); self.end_headers(); return
             body = make_chapter(int(n)).encode()
@@ -157,7 +145,6 @@ def main():
             sp = base["elapsed"] / r["elapsed"] if r["elapsed"] else 0
             print(f"    workers={r['workers']:<2d}  {sp:5.2f}x")
     print()
-
 
 if __name__ == "__main__":
     main()

@@ -1,11 +1,4 @@
-"""书架：扫描已下载的书，提供章节列表和单章读取。
-
-给网页端的两个新能力供数据：
-  · 已下载的书 → 每一章都能点开预览
-  · 每章带质检结论（乱码/空壳/正常），用户一眼看出问题
-
-数据来源就是磁盘上的 cache/ + state.json，不引入数据库。
-"""
+"""书架：扫描已下载的书，提供章节列表和单章读取。"""
 import json
 import os
 import re
@@ -19,12 +12,7 @@ def _safe_name(name: str) -> str:
 
 
 def scan(root: str) -> list[dict]:
-    """扫描输出目录，返回每本书的概要。
-
-    兼容两种目录结构：
-      · 通用站点：<root>/<slug>/cache/00001.txt + state.json
-      · GitHub 型：<root>/<书名>/<书名>.txt（只有一个合并文件）
-    """
+    """扫描输出目录，返回每本书的概要。"""
     if not os.path.isdir(root):
         return []
 
@@ -44,7 +32,6 @@ def scan(root: str) -> list[dict]:
             if merged:
                 books.append(_scan_merged(path, entry, merged[0]))
 
-    # 有问题的排前面，方便用户先看需要处理的
     books.sort(key=lambda b: (-b["stats"]["bad"], -b["stats"]["warn"],
                               b["title"] or b["slug"]))
     return books
@@ -64,8 +51,6 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
     preview = state.get("preview") or {}
     title = state.get("title") or slug
 
-    # 账本是批量落盘的，可能落后于磁盘：以「文件是否存在」为准。
-    # 不这样做，已下好的章节会被误报成「尚未下载」。
     on_disk = set()
     try:
         for name in os.listdir(cache_dir):
@@ -88,8 +73,6 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
             rep["no"] = i + 1
             rep["title"] = ctitle
             rep["status"] = "done"
-            # 付费章节：正文只有开头一小段。分析器只看文本是分不出来的
-            # （片段本身是干净中文），所以用下载时记下的原因覆盖。
             hit = preview.get(str(i))
             if hit:
                 rep["level"] = "warn"
@@ -97,7 +80,6 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
                 rep["preview"] = True
                 rep["issues"] = [hit]
         elif i in failed:
-            # 失败原因照账本写，比统一一句「下载失败」有用得多
             why = (state.get("fail_log") or {}).get(str(i)) or "下载失败"
             rep = {"no": i + 1, "title": ctitle, "status": "failed",
                    "ok": False, "level": "bad", "issues": [why],
@@ -108,9 +90,6 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
                    "cjk_ratio": 0, "length": 0}
         reports.append(rep)
 
-    # 逐章质检看不出「相对长度」异常：一章 130 字本身是干净中文，判 ok。
-    # 但和同一本书的其他章一比就露馅了 —— 这是「只拿到预览」或「抓漏了分页」
-    # 的典型形状。所以再补一刀按全书篇幅比一次。
     mark_short_ones(reports)
 
     return {
@@ -134,18 +113,7 @@ def _read_cache(cache_dir, idx) -> str:
 
 
 def mark_short_ones(reports, min_cluster: int = 3) -> None:
-    """把「明显比本书其他章短」的章节标成 warn（原地修改）。
-
-    起因：某站点的付费章节只给开头 ~130 字预览，全书 592 章里有 560 章是
-    这种片段。每章单独看都是干净中文，质检判 ok —— 用户读到才发现。
-    实测数据：免费章 1000~2200 字，预览章 103~140 字。
-
-    难点是参照长度：那本书里 95% 都是预览，中位数就是预览长度，比不出来；
-    而长章里又有 20000 字的长篇（拿它当参照，4000 字的正常章会被误标）。
-    所以只用**长度断层**判定：把全书章节按字数排序，找出相邻两章之间
-    最大的倍数跳变；跳变够大（≥3 倍）且两侧都成规模，才把短的那一簇标出来。
-    没有断层（长度连续过渡）就不下结论。
-    """
+    """把「明显比本书其他章短」的章节标成 warn（原地修改）。"""
     done = [r for r in reports if r.get("status") == "done" and r.get("length")]
     if len(done) < 6:
         return
@@ -187,7 +155,6 @@ def _scan_merged(path, slug, fname) -> dict:
         content = ""
 
     parts = re.split(r"^=== (.+?) ===$", content, flags=re.M)
-    # parts = [前言, 标题1, 正文1, 标题2, 正文2, ...]
     reports = []
     for i in range(1, len(parts), 2):
         ctitle = parts[i].strip()
@@ -201,7 +168,6 @@ def _scan_merged(path, slug, fname) -> dict:
     mark_short_ones(reports)
 
     title = slug
-    # gh_《书名》 / 《书名》 两种前缀都剥掉，只留书名本身
     if title.startswith("gh_"):
         title = title[3:]
     title = title.strip().strip("《》").strip()
@@ -235,7 +201,6 @@ def read_chapter(book: dict, no: int) -> dict | None:
         body = parts[idx] if idx < len(parts) else ""
 
     rep = chapters[no - 1]
-    # 正文里第一行是标题，预览时分开显示
     lines = body.strip().split("\n\n", 1)
     heading = lines[0].strip() if lines else rep["title"]
     text = lines[1] if len(lines) > 1 else ""

@@ -1,9 +1,4 @@
-"""端到端验证网页界面：起假站点 → 起 webui → 走 API 跑一次真实下载。
-
-只验证「界面能正常驱动下载」，不测样式（样式靠肉眼看截图）。
-
-跑：python tests/test_webui.py
-"""
+"""端到端验证网页界面：起假站点 → 起 webui → 走 API 跑一次真实下载。"""
 import io
 import json
 import os
@@ -27,7 +22,6 @@ def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
     print(("  ✅ " if cond else "  ❌ ") + name + ("" if cond else f"  <- {detail}"))
 
-
 BODY = "夜色沉沉，他提灯走过长街。" * 20
 N = 12
 
@@ -42,8 +36,6 @@ def ch_html(n):
     return (f'<html><head><title>第{n}章 测试章节{n}</title></head><body>'
             f'<h1>第{n}章 测试章节{n}</h1><div id="content">{BODY}</div></body></html>')
 
-
-# 字体加密站：正文里的汉字被替换成私有区占位符，并声明了专用字体
 ENC_FONT = ('<style>@font-face{font-family:DNMrHsV173Pd4pgy;'
             'src:url(https://cdn.example/f.woff2)format("woff2")}</style>')
 ENC_LINE = "“喜\ue483喜\ue483，\ue423喜\ue483！”雷火馆\ue44d院，紧闭\ue4f3院"
@@ -56,7 +48,6 @@ def enc_ch_html(n):
 
 class FakeSite(BaseHTTPRequestHandler):
     def do_GET(self):
-        # 目录页：/book/1/ 或 /book/2/（去掉末尾斜杠后判断）；/book/3/ 是加密站
         if self.path.rstrip('/') in ('/book/1', '/book/2', '/book/3'):
             body = toc_html(self.path.rstrip('/')).encode()
         elif self.path.startswith('/book/3/'):
@@ -91,22 +82,17 @@ def api(base, path, payload=None):
         with urllib.request.urlopen(req, timeout=15) as r:
             return json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
-        # 400/409 这类业务错误也带 JSON body，照常解析
         return json.loads(e.read().decode())
 
 
 def main():
-    # 1. 假站点
     site = ThreadingHTTPServer(('127.0.0.1', 0), FakeSite)
     site_port = site.server_address[1]
     threading.Thread(target=site.serve_forever, daemon=True).start()
     book_url = f"http://127.0.0.1:{site_port}/book/1/"
-    # 第二本书（同站点不同路径），用于测试自定义保存目录
     book_url2 = f"http://127.0.0.1:{site_port}/book/2/"
-    # 第三本书：字体加密站，用于验证界面会说清「下不了」而不是假装下完
     enc_url = f"http://127.0.0.1:{site_port}/book/3/"
 
-    # 2. 起 webui（用独立进程内服务，避免 Start-Process 时序问题）
     import webui
     from novel_dl import log as nlog
     nlog.log.handlers.clear()
@@ -127,7 +113,6 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{web_port}"
 
-    # 临时目录放系统 TEMP：受限环境里工作区对衍生进程只读
     out = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
                        f"web_{uuid.uuid4().hex[:8]}")
     os.makedirs(out, exist_ok=True)
@@ -158,7 +143,6 @@ def main():
                                      "workers": 4})
         check("start 返回 ok", r.get("ok") is True, str(r))
 
-        # 轮询到结束
         deadline = time.time() + 40
         last = None
         while time.time() < deadline:
@@ -234,7 +218,6 @@ def main():
               str(r.get("outdir")))
 
         print("\n[11] 打开文件夹接口")
-        # 只验证接口存在且返回 JSON，不真的弹资源管理器
         try:
             req = urllib.request.Request(base + "/api/opendir", data=b"",
                                          method="POST")
@@ -251,7 +234,6 @@ def main():
                                      "delay": 0, "workers": 4,
                                      "outdir": enc_out})
         check("start 返回 ok", r.get("ok") is True, str(r))
-        # 先等任务真的跑起来，再等它结束 —— 否则会读到上一次的状态
         t0 = time.time()
         while time.time() - t0 < 10:
             if api(base, "/api/status")["running"]:
@@ -285,7 +267,6 @@ def main():
         return 1
     print("✅ 网页界面全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,10 +1,4 @@
-"""稳定性专项测试：并发 / 中断 / 暂停 / 账本一致性。
-
-「小而完整」这个定位下，稳定性必须能被证明，不能靠感觉。
-本文件专门攻击边界情况。
-
-跑：python tests/test_stability.py
-"""
+"""稳定性专项测试：并发 / 中断 / 暂停 / 账本一致性。"""
 import io
 import os
 import shutil
@@ -33,12 +27,10 @@ def check(name, cond, detail=""):
 
 
 def tmpdir(kind):
-    # 落到系统 TEMP：受限环境里工作区对衍生进程只读
     p = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
                      f"{kind}_{uuid.uuid4().hex[:8]}")
     os.makedirs(p, exist_ok=True)
     return p
-
 
 BODY = "夜色沉沉，他提灯走过长街。" * 20
 BOOK = "https://stab.example/book/1/"
@@ -76,8 +68,9 @@ class StabFetcher(fetchers.BaseFetcher):
 
 fetchers.FETCHERS["stab"] = StabFetcher
 
-
 # ---------------------------------------------------------------------------
+
+
 def test_concurrent_completeness():
     """并发抓取不能丢章、不能串章（每个文件内容必须对应正确的章号）。"""
     print("\n[1] 并发完整性：不丢章 / 不串章")
@@ -91,7 +84,6 @@ def test_concurrent_completeness():
         p = Progress(out, BOOK)
         check("全部 60 章都完成", len(p.state["done"]) == 60, str(len(p.state["done"])))
 
-        # 串章检查：第 i 章缓存文件里必须是「第i章」
         bad = []
         for i in range(60):
             body = p.read_chapter(i) or ""
@@ -129,8 +121,6 @@ def test_stop_is_responsive():
     """停止信号必须能打断下载，且已完成的章节要保住。"""
     print("\n[3] 停止响应：能中断，且已下章节不丢")
     StabFetcher.chapters = 200
-    # 每章 40ms，200 章约 8 秒；0.6 秒时停止，必然还有大量未完成。
-    # 延迟不能太小 —— 太快的话整本书在停止信号前就跑完了，测不到打断。
     StabFetcher.delay = 0.04
     StabFetcher.calls = []
     out = tmpdir("stop")
@@ -169,7 +159,6 @@ def test_crash_recovery():
     StabFetcher.calls = []
     out = tmpdir("crash")
     try:
-        # 第一轮：下 30 章后模拟崩溃（不调 flush）
         e = Engine(BOOK, driver="stab", out_dir=out, workers=1)
         e.refresh_toc()
         p = e.prog
@@ -177,16 +166,13 @@ def test_crash_recovery():
             text, t, _preview = e._fetch_chapter(i, p.state["toc"])
             p.write_chapter(i, text)
             p.mark_done(i)          # 故意不 flush —— 模拟断电
-        # 此时磁盘上有 30 个章节文件，账本只落了若干次
 
         files_before = len([f for f in os.listdir(p.cache_dir) if f.endswith(".txt")])
         check("章节文件已落盘（正文每章即写）", files_before == 30, str(files_before))
 
-        # 第二轮：重跑，已完成的章不应再请求
         StabFetcher.calls = []
         Engine(BOOK, driver="stab", out_dir=out, workers=4).run()
         ch_calls = [u for u in StabFetcher.calls if u != BOOK]
-        # 允许少量重下（账本滞后），但不应是全部
         check("重跑时大部分章节被跳过", len(ch_calls) < 100, f"实际请求 {len(ch_calls)} 章")
 
         p2 = Progress(out, BOOK)
@@ -265,11 +251,7 @@ def test_failure_isolation():
 
 
 def test_legacy_fetcher_signature():
-    """第三方 fetcher 只实现 fetch(url) 时必须仍能工作。
-
-    引擎内部用 quick 参数做并发重试，但那是新增能力，不能变成破坏性变更：
-    老插件不改一行代码也得能跑。
-    """
+    """第三方 fetcher 只实现 fetch(url) 时必须仍能工作。"""
     print("\n[7] 向后兼容：老式 fetch(url) 签名仍可用")
     out = tmpdir("legacy")
 
@@ -277,7 +259,7 @@ def test_legacy_fetcher_signature():
         name = "legacy"
         MIN_DELAY = MAX_DELAY = 0
 
-        def fetch(self, url):          # 注意：只有 url，没有 quick
+        def fetch(self, url):
             if url == BOOK:
                 return toc_html(10)
             n = url.split("/")[-1].split(".")[0]
@@ -311,7 +293,6 @@ def main():
         return 1
     print("✅ 稳定性全部通过")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

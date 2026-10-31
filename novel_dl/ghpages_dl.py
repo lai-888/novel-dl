@@ -1,11 +1,4 @@
-"""GitHub Pages 型站点的下载器。
-
-和主流小说站完全不同的流程，所以单独成一个模块，不去污染通用引擎：
-
-    通用站点：目录页 HTML → 解析链接 → 逐章抓 HTML → 解析正文
-    本类站点：首页 HTML → 识别仓库 → GitHub API 拿文件树
-              → CDN 拉 Markdown → 去元数据 → 转纯文本
-"""
+"""GitHub Pages 型站点的下载器。"""
 import re
 
 import requests
@@ -22,10 +15,7 @@ def is_github_pages_site(html: str) -> bool:
 def download(book_url: str, out_dir: str, fetcher_headers=None,
              stop_event=None, pause_event=None,
              on_toc=None, progress_cb=None) -> list[str]:
-    """下载 GitHub Pages 型站点的全部 Markdown 小说。
-
-    返回成功导出的 TXT 路径列表。
-    """
+    """下载 GitHub Pages 型站点的全部 Markdown 小说。"""
     import os
     import time
 
@@ -80,11 +70,9 @@ def download(book_url: str, out_dir: str, fetcher_headers=None,
                 pass
 
         safe = re.sub(r'[\\/:*?"<>|]', "_", book_name)
-        # 每本书独立子目录，和通用流程保持一致，书架才能正确识别
         book_dir = os.path.join(out_dir, f"gh_{safe}")
         os.makedirs(book_dir, exist_ok=True)
         out_txt = os.path.join(book_dir, f"{safe}.txt")
-        # 书名本身常带《》，写标题时别再套一层
         display = book_name.strip().strip("《》").strip() or book_name
 
         done = 0
