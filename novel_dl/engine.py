@@ -753,6 +753,9 @@ class Engine:
         out = os.path.join(os.path.dirname(p.state_path), f"{safe}.txt")
         total = len(toc)
         done = sum(1 for i in range(total) if p.is_done(i))
+        if not done:
+            log.warning("一章正文都没有，先不生成 TXT")
+            return ""
         written = 0
         tmp = out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

@@ -34,8 +34,9 @@ __THEME__
 .tab .badge{
   display:inline-block;min-width:17px;height:17px;line-height:17px;
   margin-left:7px;padding:0 5px;border-radius:9px;
-  background:var(--bad);color:#fff;font-size:10.5px;text-align:center;
+  background:var(--line-lit);color:var(--text-1);font-size:10.5px;text-align:center;
 }
+.tab.on .badge{color:var(--text-0)}
 
 /* ---- 页面切换 ---- */
 .page{display:none}
@@ -416,11 +417,16 @@ async function loadShelf(){
 function renderShelf(){
   const box=$('shelf'), b=$('badge');
   const badTotal=BOOKS.reduce((n,x)=>n+(x.stats.bad||0),0);
-  b.style.display=badTotal?'inline-block':'none';
-  b.textContent=badTotal>99?'99+':badTotal;
-  $('shelfHint').textContent=BOOKS.length
-    ? `${BOOKS.length} 本 · ${BOOKS.reduce((n,x)=>n+x.stats.total,0)} 章`
-    : '';
+  b.style.display=BOOKS.length?'inline-block':'none';
+  b.textContent=BOOKS.length>99?'99+':String(BOOKS.length);
+  b.title=BOOKS.length?`书架上有 ${BOOKS.length} 本书`:'';
+  const parts=[];
+  if(BOOKS.length){
+    parts.push(`${BOOKS.length} 本`);
+    parts.push(`${BOOKS.reduce((n,x)=>n+x.stats.total,0)} 章`);
+    if(badTotal) parts.push(`${badTotal} 章没成功`);
+  }
+  $('shelfHint').textContent=parts.join(' · ');
 
   if(!BOOKS.length){
     box.innerHTML=`<div class="shelf-empty">
