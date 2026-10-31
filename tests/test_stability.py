@@ -358,7 +358,7 @@ def test_failure_budget():
 
 def test_ledger_vs_disk():
     """缓存文件在、账本却记着失败 → 以磁盘为准。"""
-    print("\n[7] 账本与磁盘不一致时以磁盘为准")
+    print("\n[10] 账本与磁盘不一致时以磁盘为准")
     out = tmpdir("ledger")
     try:
         p = Progress(out, BOOK)
