@@ -378,7 +378,7 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-let BOOKS=[], current=null, pvBook=null, pvNo=0, busy=false, hadRun=false;
+let BOOKS=[], current=null, pvBook=null, pvNo=0, busy=false, hadRun=false, lastResult=null;
 
 /* ---------- 页面切换 ---------- */
 function showPage(name){
@@ -587,8 +587,8 @@ async function tick(){
     $('stop').disabled=!busy;
 
     // 下载刚结束：自动刷新书架，让新书立刻出现
-    if(hadRun&&!busy&&s.result_txt&&$('lastResult')!==s.result_txt){
-      $('lastResult')=s.result_txt;
+    if(hadRun&&!busy&&s.result_txt&&lastResult!==s.result_txt){
+      lastResult=s.result_txt;
       loadShelf();
     }
   }catch(e){

@@ -217,6 +217,38 @@ def main():
               os.path.abspath(r.get("outdir") or "") == os.path.abspath(webui.OUT_DIR),
               str(r.get("outdir")))
 
+        print("\n[10b] 只服务本机：Host 校验 + 重复启动互斥")
+        import socket
+
+        def raw_get(host_header):
+            s = socket.create_connection(("127.0.0.1", web_port), timeout=5)
+            s.sendall((f"GET /api/status HTTP/1.1\r\nHost: {host_header}\r\n"
+                       "Connection: close\r\n\r\n").encode())
+            data = b""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            s.close()
+            return data.decode("latin-1")
+
+        check("外部域名当 Host 直接 403",
+              "403" in raw_get("evil.example").split("\r\n")[0])
+        check("本机 Host 正常放行",
+              "200" in raw_get(f"127.0.0.1:{web_port}").split("\r\n")[0])
+
+        deadline = time.time() + 40
+        while time.time() < deadline and api(base, "/api/status")["running"]:
+            time.sleep(0.3)
+        webui.STATE["running"] = True
+        try:
+            r = api(base, "/api/start", {"url": book_url, "driver": "requests"})
+            check("已有任务时再启动被拒", r.get("ok") is False, str(r))
+            check("拒绝理由可读", "在跑" in (r.get("error") or ""), str(r.get("error")))
+        finally:
+            webui.STATE["running"] = False
+
         print("\n[11] 打开文件夹接口")
         try:
             req = urllib.request.Request(base + "/api/opendir", data=b"",

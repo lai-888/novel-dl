@@ -2,6 +2,7 @@
 import argparse
 import json
 import logging
+import logging.handlers
 import os
 import sys
 import threading
@@ -91,15 +92,21 @@ def resolve_out_dir(path: str | None) -> str:
 
 def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
              out_dir=None):
+    target_dir = resolve_out_dir(out_dir)
+
+    with STATE_LOCK:                      # 占位和检查在同一把锁里，连点两次也只起一个
+        if STATE["running"]:
+            return False
+        STATE["running"] = True
+
     stop_event = threading.Event()
     pause_event = threading.Event()
     STATE["stop_event"] = stop_event
     STATE["pause_event"] = pause_event
-    target_dir = resolve_out_dir(out_dir)
 
     def worker():
         with STATE_LOCK:
-            STATE.update(running=True, paused=False, book_url=url,
+            STATE.update(paused=False, book_url=url,
                          backup_url=backup_url, failed=[],
                          result_txt=None, started_at=time.time(),
                          finished_at=None, done=0, total=0,
@@ -121,12 +128,19 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                 else:
                     STATE["message"] = f"《{title}》共 {total} 章，开始下载"
 
+        eng = None
         try:
-            eng = Engine(url, driver=driver, out_dir=target_dir,
-                         from_ch=from_ch, to_ch=to_ch, min_delay=delay,
-                         backup_url=backup_url,
-                         stop_event=stop_event, pause_event=pause_event,
-                         workers=workers, on_toc=on_toc)
+            try:
+                eng = Engine(url, driver=driver, out_dir=target_dir,
+                             from_ch=from_ch, to_ch=to_ch, min_delay=delay,
+                             backup_url=backup_url,
+                             stop_event=stop_event, pause_event=pause_event,
+                             workers=workers, on_toc=on_toc)
+            except SystemExit as e:      # 驱动没装、驱动名写错之类
+                log(f"启动失败：{e}")
+                with STATE_LOCK:
+                    STATE["message"] = f"启动失败：{str(e)[:120]}"
+                return
 
             prog = eng.prog
             orig_done, orig_fail = prog.mark_done, prog.mark_failed
@@ -161,7 +175,7 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                 if prev_n:
                     STATE["message"] += f"（其中 {prev_n} 章只有付费预览）"
         except (SystemExit, KeyboardInterrupt) as e:
-            blocked = getattr(eng, "blocked", None)
+            blocked = getattr(eng, "blocked", None) if eng is not None else None
             if blocked is not None:
                 from novel_dl.guard import explain
                 for line in explain(blocked).splitlines():
@@ -197,11 +211,20 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                 STATE["finished_at"] = time.time()
 
     threading.Thread(target=worker, daemon=True).start()
+    return True
 
 from novel_dl.ui_page import PAGE
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _host_ok(self) -> bool:
+        """只接受本机地址：挡住 DNS 重绑定和任意网页发来的跨站请求。"""
+        host = (self.headers.get("Host") or "").strip().lower()
+        if not host:
+            return False
+        name = host.split(":")[0].strip("[]")
+        return name in ("127.0.0.1", "localhost", "::1")
+
     def _send(self, code, body, ctype):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -225,6 +248,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         from urllib.parse import urlparse
         route = urlparse(self.path).path
+        if not self._host_ok():
+            return self._send(403, b"forbidden", "text/plain")
 
         if route == "/":
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
@@ -305,6 +330,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"404", "text/plain")
 
     def do_POST(self):
+        if not self._host_ok():
+            return self._send(403, b"forbidden", "text/plain")
         if self.path in ("/api/pause", "/api/resume", "/api/stop"):
             with STATE_LOCK:
                 pe = STATE.get("pause_event")
@@ -371,17 +398,20 @@ class Handler(BaseHTTPRequestHandler):
         if not url.startswith(("http://", "https://")):
             return self._json(400, {"ok": False, "error": "网址需要以 http(s):// 开头"})
         with STATE_LOCK:
-            if STATE["running"]:
-                return self._json(409, {"ok": False, "error": "已有任务在跑，等它结束再开新的"})
+            busy = STATE["running"]
+        if busy:
+            return self._json(409, {"ok": False, "error": "已有任务在跑，等它结束再开新的"})
         try:
             outdir = resolve_out_dir(req.get("outdir"))
         except Exception as e:
             return self._json(400, {"ok": False, "error": f"保存位置无效：{e}"})
-        run_task(url, req.get("from"), req.get("to"),
-                 req.get("driver") or "requests", req.get("delay") or 0,
-                 backup_url=(req.get("backup") or "").strip() or None,
-                 workers=int(req.get("workers") or 1),
-                 out_dir=outdir)
+        started = run_task(url, req.get("from"), req.get("to"),
+                           req.get("driver") or "requests", req.get("delay") or 0,
+                           backup_url=(req.get("backup") or "").strip() or None,
+                           workers=int(req.get("workers") or 1),
+                           out_dir=outdir)
+        if not started:
+            return self._json(409, {"ok": False, "error": "已有任务在跑，等它结束再开新的"})
         self._json(200, {"ok": True, "outdir": outdir})
 
     def log_message(self, *a):   # 静音 HTTP 访问日志
@@ -398,7 +428,9 @@ def main():
     nlog.setup(logging.INFO)
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     os.makedirs(log_dir, exist_ok=True)
-    fh = logging.FileHandler(os.path.join(log_dir, "webui.log"), encoding="utf-8")
+    fh = logging.handlers.RotatingFileHandler(
+        os.path.join(log_dir, "webui.log"), maxBytes=4 * 1024 * 1024,
+        backupCount=3, encoding="utf-8")
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     nlog.log.addHandler(fh)
     nlog.log.addHandler(_StateHandler())
