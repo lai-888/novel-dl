@@ -13,8 +13,10 @@
 import io
 import os
 import sys
+import tempfile
 import threading
 import time
+import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -22,6 +24,14 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 
 from novel_dl.engine import Engine  # noqa: E402
 from novel_dl.fetchers import BaseFetcher, FETCHERS  # noqa: E402
+
+
+def tmpdir(name):
+    """临时目录放系统 TEMP：受限环境里工作区对衍生进程只读。"""
+    p = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                     f"rl_{name}_{uuid.uuid4().hex[:6]}")
+    os.makedirs(p, exist_ok=True)
+    return p
 
 PASS, FAIL = [], []
 BODY = "正文内容。" * 40
@@ -69,9 +79,11 @@ def gaps(stamps):
 
 
 def main():
+    dirs = {}
     print("\n[1] 并发 4 + delay=0.15：请求间隔必须 >= 0.15s")
     RateSite.stamps = []
-    eng = Engine(BOOK, driver="rate", out_dir="C:/Users/31383/Desktop/novel-dl/tests/.tmp/rl1",
+    dirs["rl1"] = tmpdir("one")
+    eng = Engine(BOOK, driver="rate", out_dir=dirs["rl1"],
                  workers=4, min_delay=0.15)
     eng.fetcher.MIN_DELAY = eng.fetcher.MAX_DELAY = 0
     eng.run()
@@ -85,8 +97,9 @@ def main():
 
     print("\n[2] 对照：delay=0 时应明显更快")
     RateSite.stamps = []
+    dirs["rl2"] = tmpdir("two")
     eng2 = Engine(BOOK, driver="rate",
-                  out_dir="C:/Users/31383/Desktop/novel-dl/tests/.tmp/rl2",
+                  out_dir=dirs["rl2"],
                   workers=4, min_delay=0)
     eng2.fetcher.MIN_DELAY = eng2.fetcher.MAX_DELAY = 0
     eng2.run()
@@ -97,8 +110,9 @@ def main():
 
     print("\n[3] 并发 8 也不能突破限速")
     RateSite.stamps = []
+    dirs["rl3"] = tmpdir("three")
     eng3 = Engine(BOOK, driver="rate",
-                  out_dir="C:/Users/31383/Desktop/novel-dl/tests/.tmp/rl3",
+                  out_dir=dirs["rl3"],
                   workers=8, min_delay=0.1)
     eng3.fetcher.MIN_DELAY = eng3.fetcher.MAX_DELAY = 0
     eng3.run()
@@ -133,8 +147,9 @@ def main():
     old = nlog.log.level
     nlog.log.setLevel(logging.INFO)
     try:
+        dirs["rl4"] = tmpdir("four")
         Engine(BOOK, driver="banned",
-               out_dir="C:/Users/31383/Desktop/novel-dl/tests/.tmp/rl4",
+               out_dir=dirs["rl4"],
                workers=4, min_delay=0).run()
     finally:
         nlog.log.removeHandler(h)
@@ -150,9 +165,8 @@ def main():
           "10054" in joined or "Connection" in joined, joined[-200:])
 
     import shutil
-    for d in ("rl1", "rl2", "rl3", "rl4"):
-        shutil.rmtree(f"C:/Users/31383/Desktop/novel-dl/tests/.tmp/{d}",
-                      ignore_errors=True)
+    for d in dirs.values():
+        shutil.rmtree(d, ignore_errors=True)
 
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:

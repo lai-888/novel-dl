@@ -13,11 +13,16 @@
 import io
 import os
 import sys
+import tempfile
 
 # 路径跟着仓库走，不要写死本机绝对路径（否则别人 clone 下来跑不起来）
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+# 推断缓存别写到真实用户目录（只读环境/CI 会失败），测试用临时文件
+os.environ["NOVEL_DL_CACHE"] = os.path.join(
+    tempfile.gettempdir(), "novel-dl-tests", "learned.json")
 
 from bs4 import BeautifulSoup  # noqa: E402
 

@@ -16,6 +16,7 @@
 import json
 import os
 import re
+import tempfile
 from collections import Counter
 from urllib.parse import urljoin
 
@@ -33,13 +34,19 @@ NAV_WORDS = re.compile(
     r"^(首页|目录|书架|排行|顶部|底部|上一[章页]|下一[章页]|返回|登录|注册|"
     r"加入书签|投推荐票|开始阅读|查看更多|more)$")
 
-# 缓存位置：优先用户目录，写不进去就退回当前工作目录。
-# 用户目录是标准做法；但某些受限环境（只读家目录、容器）写不了，
-# 那时退回 cwd 至少能让「本次运行内的重复推断」免掉。
+# 缓存位置：优先用户目录，写不进去就退回当前工作目录，最后退到系统 TEMP。
+# 用户目录是标准做法；但某些受限环境（只读家目录、容器、沙箱）写不了，
+# cwd 也可能只读 —— 那时退到 TEMP 至少能让「同一台机器上的重复推断」免掉。
+# NOVEL_DL_CACHE 可以显式指定（测试和 CI 用它，避免写到真实用户目录）。
 def _cache_candidates() -> list[str]:
-    paths = [
+    paths = []
+    env = os.environ.get("NOVEL_DL_CACHE", "").strip()
+    if env:
+        paths.append(env)
+    paths += [
         os.path.join(os.path.expanduser("~"), ".novel-dl", "learned.json"),
         os.path.join(os.getcwd(), ".novel-dl-learned.json"),
+        os.path.join(tempfile.gettempdir(), "novel-dl-learned.json"),
     ]
     return paths
 
