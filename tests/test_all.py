@@ -224,11 +224,80 @@ def test_chapter_boilerplate():
     check("重复的 (1/2) 标题行被删掉", "(1/2)" not in body, body[:120])
 
 
+Q_BASE = "https://qs.example/index.php"
+Q_INDEX = f"{Q_BASE}?ca=Chapter.Index&bid=88&cid=1"
+Q_READ = f"{Q_BASE}?ca=Chapter.Read&bid=88&cid=2"
+
+
+class QuerySiteFetcher(fetchers.BaseFetcher):
+    """网址里没有 .html，全靠查询串；正文页上只有「目录」链接能回去。"""
+
+    name = "fake-query"
+    MIN_DELAY = MAX_DELAY = 0
+    calls = []
+
+    def fetch(self, url):
+        type(self).calls.append(url)
+        if "Chapter.Index" in url:
+            items = "".join(
+                f'<a href="{Q_BASE}?ca=Chapter.Read&bid=88&cid={i}">{t}</a>'
+                for i, t in enumerate(
+                    ["版权信息", "献词", "引子", "1 飓风恩护者", "2 荣誉已死"], 1))
+            return (f'<html><head><title>《曙光志》</title></head><body>'
+                    f'<div class="cat">{items}</div></body></html>')
+        cid = url.rsplit("cid=", 1)[-1]
+        return ('<html><head><title>《曙光志》</title></head><body>'
+                f'<a href="{Q_INDEX}">目录</a>'
+                f'<div id="content">{"这是本节的内容。" * 20}</div></body></html>')
+
+fetchers.FETCHERS["fake-query"] = QuerySiteFetcher
+
+
+def test_query_url_sites():
+    """没有目录地址的站：给阅读页地址也要能下。"""
+    print("\n[5] 查询串网址：给阅读页地址也能找到目录")
+    html = ('<html><head><title>《曙光志（全三卷）》</title></head><body>'
+            '<a href="/index.php?ca=Chapter.Read&bid=88&cid=1">开始阅读</a>'
+            '<div class="catalog">'
+            + "".join(f'<a href="/index.php?ca=Chapter.Read&bid=88&cid={i}">{t}</a>'
+                      for i, t in enumerate(
+                          ["版权信息", "献词", "引子", "1 飓风恩护者"], 1))
+            + '</div></body></html>')
+    from novel_dl.parser import GenericParser
+    _title, toc = GenericParser().parse_toc(html, Q_INDEX)
+    check("查询串网址也能认出章节", len(toc) == 4, str(len(toc)))
+    check("章节标题取链接文字", toc[0][0] == "版权信息", str(toc[0]))
+    check("顺序就是页面顺序", [t for t, _ in toc][1:3] == ["献词", "引子"],
+          str([t for t, _ in toc]))
+    check("地址保留查询串", "cid=4" in toc[3][1], toc[3][1])
+
+    out = os.path.join(_tmpdir("query"), "books")
+    try:
+        txt = Engine(Q_INDEX, driver="fake-query", out_dir=out).run()
+        text = open(txt, encoding="utf-8").read()
+        check("直接给目录地址能下完", text.count("=== ") == 5, str(text.count("=== ")))
+    finally:
+        shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+
+    out = os.path.join(_tmpdir("query2"), "books")
+    try:
+        QuerySiteFetcher.calls = []
+        txt = Engine(Q_READ, driver="fake-query", out_dir=out).run()
+        text = open(txt, encoding="utf-8").read()
+        check("给正文页地址也能下完", text.count("=== ") == 5, str(text.count("=== ")))
+        check("自己顺着「目录」链接找了回来",
+              any("Chapter.Index" in u for u in QuerySiteFetcher.calls),
+              str(QuerySiteFetcher.calls[:3]))
+    finally:
+        shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
     test_url_fixes()
     test_chapter_boilerplate()
+    test_query_url_sites()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

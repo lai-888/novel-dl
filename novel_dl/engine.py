@@ -5,8 +5,8 @@ import time
 
 from . import log
 from .fetchers import get_fetcher
-from .guard import EncryptedContent
-from .parser import get_parser
+from .guard import EncryptedContent, probe_reason
+from .parser import find_toc_url, get_parser
 from .progress import Progress
 from .rules import apply_url_fixes, find_rule
 from .textutil import body_from, safe_filename
@@ -140,7 +140,20 @@ class Engine:
             self.backup_url = None
             html = self._get(self.book_url)
 
-        title, toc = self.parser.parse_toc(html, self.book_url)
+        pr = probe_reason(html)
+        if pr:
+            raise SystemExit(f"{pr}。装了 selenium 之后加 -d selenium 再试。")
+
+        try:
+            title, toc = self.parser.parse_toc(html, self.book_url)
+        except SystemExit:
+            alt = find_toc_url(html, self.book_url)
+            if not alt or alt == self.book_url:
+                raise
+            log.info("这一页不是目录，按页面里的「目录」链接再抓一次：%s", alt)
+            html = self._get(alt)
+            self.book_url = alt
+            title, toc = self.parser.parse_toc(html, self.book_url)
         toc = self._extend_toc_pages(toc, html)
 
         old_n = len(self.prog.state.get("toc", []))

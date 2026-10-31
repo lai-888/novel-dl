@@ -30,6 +30,22 @@ class DuplicatePage(Exception):
     """站点把别的章节正文又放了一遍（排版错位），取到的内容不属于本章。"""
 
 
+PROBE_MAX_BYTES = 1500
+
+
+def probe_reason(html: str):
+    """站点返回的是「反爬校验页」：一小段几乎空的 HTML 加一段跳转脚本。"""
+    if not html or len(html) > PROBE_MAX_BYTES:
+        return None
+    low = html.lower()
+    if "<script" not in low:
+        return None
+    if "<a " in low or "<div" in low or "class=" in low:
+        return None
+    return (f"站点返回的是一张反爬校验页（只有 {len(html)} 字节的一段脚本），"
+            f"没有浏览器环境过不去")
+
+
 def detect_font_encryption(html: str, text: str) -> float:
     """返回正文里私有区字符的占比（0~1）。"""
     if not text or len(text) < MIN_SAMPLE:

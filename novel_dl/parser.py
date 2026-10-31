@@ -1,6 +1,6 @@
 """解析层 —— 站点解析器的插件化。"""
 import re
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -207,6 +207,36 @@ class GenericParser(BaseParser):
         t = re.sub(r"^([0-9零一二三四五六七八九十百千万两]+)([章节回幕话卷])", r"第\1\2", t)
         return t
 
+    QNUM = re.compile(r"\d+")
+
+    def _chapter_links_by_template(self, soup, base_url):
+        """网址里没有 .html、只有查询串（?bid=1&cid=2）的站：按 URL 形状聚类。"""
+        groups = {}
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith(("javascript", "#", "mailto")):
+                continue
+            url = urljoin(base_url, href)
+            parts = urlsplit(url)
+            if not parts.query:
+                continue
+            tpl = f"{parts.netloc}{parts.path}?" + self.QNUM.sub("#", parts.query)
+            groups.setdefault(tpl, []).append((a, a.get_text(strip=True), url))
+        if not groups:
+            return [], ""
+        tpl, items = max(groups.items(), key=lambda kv: len(kv[1]))
+        if len(items) < 3:
+            return [], ""
+        picked, order = {}, []
+        for a, text, url in items:
+            old = picked.get(url)
+            if old is None:
+                picked[url] = (a, text, url)
+                order.append(url)
+            elif old[1] in self.NAV_TEXTS and text not in self.NAV_TEXTS:
+                picked[url] = (a, text, url)   # 同一个地址，取不像导航的那个标题
+        return [picked[u] for u in order], tpl
+
     def _chapter_links_by_url(self, soup, base_url):
         """按 URL 形态聚类识别章节链接（标题被图标字体混淆时的兜底）。"""
         from collections import Counter
@@ -256,6 +286,13 @@ class GenericParser(BaseParser):
             links = merged
         elif not links and by_url:
             links = by_url
+
+        if not links:
+            by_tpl, tpl = self._chapter_links_by_template(soup, base_url)
+            if by_tpl:
+                log.info("目录按网址形状归类：同一模板下找到 %d 章", len(by_tpl))
+                log.debug("  模板：%s", tpl)
+                return title, self._reorder([(t, u) for _a, t, u in by_tpl])
 
         if not links:
             raise SystemExit(
@@ -403,6 +440,24 @@ class GenericParser(BaseParser):
             if n > best_len:
                 best, best_len = div, n
         return best
+
+
+TOC_HINT = re.compile(r"目录|章节目录|全部章节|返回目录|章节列表|catalog|index", re.I)
+
+
+def find_toc_url(html: str, base_url: str):
+    """当前页不是目录时，从页面里找「目录」入口。"""
+    soup = BeautifulSoup(html, "lxml")
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if href.startswith(("javascript", "#", "mailto")):
+            continue
+        text = a.get_text(strip=True)
+        if not text or len(text) > 20:
+            continue
+        if TOC_HINT.search(text) or TOC_HINT.search(href):
+            return urljoin(base_url, href)
+    return None
 
 
 def get_parser(book_url: str, fetcher=None, auto: bool = True,
