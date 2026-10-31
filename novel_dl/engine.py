@@ -30,7 +30,7 @@ class Engine:
                  from_ch=None, to_ch=None, min_delay=None,
                  backup_url=None, stop_event=None, pause_event=None,
                  max_toc_pages=200, workers=1, auto_detect=True,
-                 on_toc=None):
+                 proxy=None, on_toc=None):
         book_url = (book_url or "").strip()
         if not book_url:
             raise SystemExit("没有提供小说目录页网址")
@@ -40,6 +40,9 @@ class Engine:
         book_url = self._coerce_toc_url(book_url)
 
         self.book_url = book_url
+        if proxy:
+            from .fetchers import set_proxy
+            set_proxy(proxy)
         self.fetcher = get_fetcher(driver)
         if min_delay is not None:
             self.fetcher.MIN_DELAY = min_delay
@@ -455,7 +458,18 @@ class Engine:
             check_encrypted(html, "", url)   # 命中则抛 EncryptedContent
             self._encryption_checked = True
 
-        c_title, body = self.parser.parse_chapter(html)
+        try:
+            c_title, body = self.parser.parse_chapter(html)
+        except Exception as e_short:
+            # 站点有时第一次只给半截正文（实测同一章 170 字 / 1500 字），
+            # 解析器会把这种结果判成「正文过短」。补抓一次再解析，
+            # 仍不行就照原样抛出去（那是真的解析失败）。
+            if "过短" not in str(e_short):
+                raise
+            log.info("    ↺ 解析出的正文过短，再请求一次")
+            html = self._get(url)
+            first_html = html
+            c_title, body = self.parser.parse_chapter(html)
 
         # 章节内分页跟随（/ID、/ID-2、/ID_2 …），上限 30 页
         page_url, pages = url, 1
@@ -471,9 +485,31 @@ class Engine:
 
         text = f"{c_title}\n\n{body}"
 
+        from .guard import FillerPage, filler_reason, looks_truncated, preview_reason
+
+        # 占位页：不是正文，判失败让引擎按失败重试/记账
+        fr = filler_reason(body)
+        if fr:
+            raise FillerPage(fr)
+
+        # 半截正文：同一章第一次请求只回 170 字、再要一次就 1500 字（实测某站
+        # 的防采集策略）。单个分页都没有、结尾又不像说完一句话时，补抓一次，
+        # 谁长用谁 —— 这比事后再让用户重下便宜得多。
+        if pages == 1 and looks_truncated(body):
+            log.info("    ↺ 正文只有 %d 字且未收尾，再请求一次", len(body))
+            try:
+                html2 = self._get(url)
+                c2, body2 = self.parser.parse_chapter(html2)
+                if len(body2) > len(body):
+                    c_title = c2 or c_title
+                    body = body2
+                    text = f"{c_title}\n\n{body}"
+                    first_html = html2
+            except Exception as e:
+                log.debug("补抓失败（保留第一次的结果）：%s", e)
+
         # 付费章节检测：未订阅时站点只给开头一小段，页面上不报错。
         # 不标出来的话，用户在账本上看到的是「已下载」，要读的时候才发现只有 130 字。
-        from .guard import preview_reason
         return text, c_title, preview_reason(first_html, text)
 
     def _download_loop(self, toc, targets):

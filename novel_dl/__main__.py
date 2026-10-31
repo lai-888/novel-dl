@@ -54,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="额外规则文件，可多次指定；也可用环境变量 NOVEL_DL_RULES")
     ap.add_argument("--config", default=None, metavar="FILE",
                     help="配置文件路径（默认 ./novel-dl.toml 或 ~/.novel-dl/config.toml）")
+    ap.add_argument("--proxy", default=None, metavar="URL",
+                    help="走代理抓取，例如 http://127.0.0.1:7890。"
+                         "浏览器能打开、程序报「连接被重置(10054)」时用它；"
+                         "也可用环境变量 NOVEL_DL_PROXY_URL")
     ap.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
     ap.add_argument("-V", "--version", action="version", version=f"novel-dl {__version__}")
     return ap
@@ -84,6 +88,7 @@ def main(argv=None):
         max_toc_pages=cfg["max_pages"],
         workers=args.workers if args.workers is not None else cfg["workers"],
         auto_detect=not args.no_auto,
+        proxy=args.proxy or cfg.get("proxy"),
     )
     engine.run()
 

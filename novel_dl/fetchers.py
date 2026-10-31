@@ -9,6 +9,7 @@
 新增抓取策略 = 新增一个类 + 一行注册，不动任何其他代码。
 """
 import inspect
+import os
 import random
 import threading
 import time
@@ -19,6 +20,24 @@ from . import log
 from .encoding import decode_body
 
 FETCHERS = {}
+
+# 全局代理设置（--proxy / NOVEL_DL_PROXY_URL）。
+# 为什么需要它：不少站点挂在 Cloudflare 后面，国内直连会被重置
+# （ConnectionResetError 10054 / SSL unexpected eof），而浏览器因为走了
+# 系统代理所以能打开 —— 用户看到的现象就是「浏览器能看，程序下不了」。
+_PROXY: str | None = None
+
+
+def set_proxy(url: str | None):
+    """设置所有 requests 请求走的代理；传空表示「不显式指定」。"""
+    global _PROXY
+    u = (url or "").strip()
+    _PROXY = u or None
+
+
+def get_proxy() -> str | None:
+    """当前生效的代理：命令行 > 环境变量 NOVEL_DL_PROXY_URL。"""
+    return _PROXY or (os.environ.get("NOVEL_DL_PROXY_URL", "").strip() or None)
 
 
 def register(name):
@@ -148,10 +167,16 @@ class RequestsFetcher(BaseFetcher):
             "Accept-Language": "zh-CN,zh;q=0.9",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
-        # 系统代理（Clash 等）常把国内小站的连接掐掉；默认直连更稳。
-        # 需要走代理时设置环境变量 NOVEL_DL_PROXY=1。
-        import os
-        self.session.trust_env = os.environ.get("NOVEL_DL_PROXY") == "1"
+        # 代理：显式指定时全程走代理（含 quick 模式，否则并发下载会全部被重置）；
+        # 没指定就退回「默认直连」，直连被反复重置时 fetch() 里还有一次兜底。
+        proxy = get_proxy()
+        if proxy:
+            self.session.proxies = {"http": proxy, "https": proxy}
+            self.session.trust_env = False        # 别让系统代理覆盖显式设置
+        else:
+            # 系统代理（Clash 等）常把国内小站的连接掐掉；默认直连更稳。
+            # 想让整个会话都走系统代理：NOVEL_DL_PROXY=1
+            self.session.trust_env = os.environ.get("NOVEL_DL_PROXY") == "1"
 
     def fetch(self, url: str, quick: bool = False) -> str:
         retries = 1 if quick else self.RETRIES
@@ -194,6 +219,11 @@ class RequestsFetcher(BaseFetcher):
         # 最后手段：直连被重置时改走系统代理再试 1 次
         alt = requests.Session()
         alt.headers.update(self.session.headers)
+        if self.session.proxies:
+            # 已经显式指定过代理还失败，说明代理本身不通，再试也没意义
+            raise ConnectionError(
+                f"重试 {self.RETRIES} 次仍失败（代理 {list(self.session.proxies.values())[0]}）"
+                f": {url} ({last_err})")
         alt.trust_env = True
         try:
             log.warning("    ⚠ 直连反复失败，尝试经系统代理访问…")

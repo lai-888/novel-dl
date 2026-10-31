@@ -16,6 +16,7 @@
 跑：python tests/test_guard.py
 """
 import io
+import json
 import logging
 import os
 import shutil
@@ -30,7 +31,8 @@ sys.path.insert(0, ROOT)
 from novel_dl import fetchers, library, log as nlog          # noqa: E402
 from novel_dl.engine import Engine                           # noqa: E402
 from novel_dl.guard import (EncryptedContent, check_encrypted,  # noqa: E402
-                            detect_font_encryption, explain, preview_reason)
+                            detect_font_encryption, explain, filler_reason,
+                            looks_truncated, preview_reason)
 
 nlog.setup()
 logging.getLogger("novel_dl").setLevel(logging.CRITICAL)   # 测试输出保持干净
@@ -145,6 +147,48 @@ class PayFetcher(fetchers.BaseFetcher):
 
 
 fetchers.FETCHERS["fake-pay"] = PayFetcher
+
+
+# ---------------------------------------------------------------------------
+# 半截正文 / 占位页：同一章第一次只给一小段，再要一次才给全文
+# ---------------------------------------------------------------------------
+SHORT_BOOK = "https://short.example/book/5/"
+SHORT_TEASER = "杭晚抱着言溯怀哭了很久，哭到晕乎乎的，似乎都忘了他还在她身体里"
+FILLER_TEXT = ("正在手打中，客官请稍等片刻，内容更新后，需要重新刷新页面，"
+               "才能获取最新更新！si m i s h u wu. c o m")
+
+
+def short_page(n, body):
+    return (f'<html><head><title>第{n}章</title></head><body>'
+            f'<h1>第{n}章</h1><div id="content">{body}</div></body></html>')
+
+
+class ShortFetcher(fetchers.BaseFetcher):
+    """第 1 章：第一次给半截，第二次给全文；第 2 章：占位页；第 3 章：正常。"""
+
+    name = "fake-short"
+    MIN_DELAY = MAX_DELAY = 0
+    calls = []
+    seen_one = 0
+
+    def fetch(self, url):
+        type(self).calls.append(url)
+        if url == SHORT_BOOK:
+            return ('<html><head><title>半截书_在线阅读</title></head><body>'
+                    + "".join(f'<a href="/book/5/{i}.html">第{i}章</a>'
+                              for i in range(1, 4)) + '</body></html>')
+        self.polite_sleep()
+        n = int(url.split("/")[-1].split(".")[0])
+        if n == 1:
+            type(self).seen_one += 1
+            body = SHORT_TEASER if type(self).seen_one == 1 else GOOD_TEXT * 40
+            return short_page(1, body)
+        if n == 2:
+            return short_page(2, FILLER_TEXT)
+        return short_page(3, GOOD_TEXT * 40)
+
+
+fetchers.FETCHERS["fake-short"] = ShortFetcher
 
 
 def _tmpdir(prefix):
@@ -294,6 +338,43 @@ def main():
     check("书架写明了原因", "付费" in " ".join(by_no[3]["issues"]),
           str(by_no[3]["issues"]))
     check("正常章没被误标", by_no[1]["level"] == "ok", str(by_no[1]))
+    shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+
+    print("\n[10] 占位页 / 半截正文")
+    filler = ("第137章 一层又一层\n\n正在手打中，客官请稍等片刻，内容更新后，"
+              "需要重新刷新页面，才能获取最新更新！si m i s h u wu. c o m")
+    check("识别「正在手打中」占位页", filler_reason(filler) is not None,
+          str(filler_reason(filler)))
+    check("正常正文不判占位", filler_reason("第1章\n\n" + GOOD_TEXT * 10) is None,
+          "误报")
+    check("半截正文（短且无句末标点）判可疑",
+          looks_truncated(PAY_SHORT) is True, repr(PAY_SHORT[-6:]))
+    check("正常结尾的短章不判可疑",
+          looks_truncated("他说：“走吧。”") is False)
+    check("够长就不判可疑", looks_truncated(GOOD_TEXT * 10) is False)
+
+    print("\n[11] 引擎：半截正文会补抓一次，占位页判失败")
+    out = os.path.join(_tmpdir("short_"), "books")
+    ShortFetcher.calls = []
+    ShortFetcher.seen_one = 0
+    Engine(SHORT_BOOK, driver="fake-short", out_dir=out, workers=1).run()
+    book_dir = os.path.join(out, os.listdir(out)[0])
+    cache = os.path.join(book_dir, "cache")
+    ch1 = open(os.path.join(cache, "00000.txt"), encoding="utf-8").read()
+    check("同一章被请求了两次（先半截，后补抓）",
+          len([u for u in ShortFetcher.calls if u.endswith("/1.html")]) == 2,
+          str(ShortFetcher.calls))
+    check("最终用的是长的那一份", len(ch1) > 800, f"{len(ch1)} 字")
+    st = json.load(open(os.path.join(book_dir, "state.json"), encoding="utf-8"))
+    check("占位页那章记为失败", 1 in st["failed"], str(st["failed"]))
+    check("失败原因写的是占位页",
+          "占位页" in (st.get("fail_log") or {}).get("1", ""),
+          str(st.get("fail_log")))
+    check("正常章照常完成", 2 in st["done"], str(st["done"]))
+    bk = library.scan(out)[0]
+    bad = {c["no"]: c for c in bk["chapters"]}
+    check("书架显示占位页的原因", "占位页" in " ".join(bad[2]["issues"]),
+          str(bad[2]["issues"]))
     shutil.rmtree(os.path.dirname(out), ignore_errors=True)
 
     print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")

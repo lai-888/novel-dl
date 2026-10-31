@@ -42,6 +42,14 @@ class EncryptedContent(Exception):
             f"正文被字体加密（{ratio:.0%} 的字符是不可读占位符）")
 
 
+class FillerPage(Exception):
+    """拿到的不是正文，而是站点的占位提示（「正在手打中」之类）。
+
+    这类页面 HTTP 200、结构正常，内容却是一句「请稍等片刻」。如果不拦，
+    它会当成一章成功正文存下来 —— 用户翻到那一章只看到一句提示。
+    """
+
+
 def detect_font_encryption(html: str, text: str) -> float:
     """返回正文里私有区字符的占比（0~1）。"""
     if not text or len(text) < MIN_SAMPLE:
@@ -62,6 +70,35 @@ def detect_font_encryption(html: str, text: str) -> float:
 PAYWALL_FLAG = re.compile(r"""isfree["']?\s*[:=]\s*false""", re.I)
 PAYWALL_WORDS = ("购买本章", "余额不足", "订阅本章", "付费章节")
 PREVIEW_MAX = 400
+
+# —— 占位页 / 半截正文 ——
+# 实测某站没生成好的章节返回「正在手打中，客官请稍等片刻，内容更新后，
+# 需要重新刷新页面」，而同一批里正常章节 1400~1900 字、这种页面 60 字。
+# 更狡猾的是「只给半截」：同一章第一次请求返回 170 字，重试一次就 1500 字。
+FILLER_PATTERNS = ("正在手打中", "手打中", "请稍等片刻", "内容更新后",
+                   "重新刷新页面", "内容正在加载", "本章还没")
+SHORT_CHAPTER = 400
+_SENTENCE_END = "。！？…”」』）~～.!?"
+
+
+def filler_reason(text: str):
+    """是不是站点的占位页；是则返回原因，否则 None。"""
+    s = (text or "").strip()
+    if not s:
+        return None
+    head = s[:800]          # 提示语总在开头，别被正文里偶尔出现的词误伤
+    for kw in FILLER_PATTERNS:
+        if kw in head:
+            return f"站点占位页（{len(s)} 字，提示「{kw}」），这一章还没生成"
+    return None
+
+
+def looks_truncated(text: str, floor: int = SHORT_CHAPTER) -> bool:
+    """正文短得可疑，且结尾不像一句话说完 —— 多半只抓到了半截。"""
+    s = (text or "").strip()
+    if not s or len(s) >= floor:
+        return False
+    return s[-1] not in _SENTENCE_END
 
 
 def preview_reason(html: str, text: str):

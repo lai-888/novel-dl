@@ -26,6 +26,8 @@ DEFAULTS = {
     "rules_files": [],
     "max_pages": 200,
     "timeout": 45,
+    # 代理：直连被站点前面的 CDN 重置时填，例如 "http://127.0.0.1:7890"
+    "proxy": None,
 }
 
 SEARCH = [

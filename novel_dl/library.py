@@ -97,8 +97,10 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
                 rep["preview"] = True
                 rep["issues"] = [hit]
         elif i in failed:
+            # 失败原因照账本写，比统一一句「下载失败」有用得多
+            why = (state.get("fail_log") or {}).get(str(i)) or "下载失败"
             rep = {"no": i + 1, "title": ctitle, "status": "failed",
-                   "ok": False, "level": "bad", "issues": ["下载失败"],
+                   "ok": False, "level": "bad", "issues": [why],
                    "cjk_ratio": 0, "length": 0}
         else:
             rep = {"no": i + 1, "title": ctitle, "status": "pending",

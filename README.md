@@ -107,6 +107,25 @@ novel-dl <url> --no-auto    # 关掉推断，只用通用解析器
 这能救回那些**先于本功能下载**的旧书，不必重新请求。判据基于断层而不是平均长度，
 所以「有几章特别长」的正常书不会被误标。
 
+## 半截正文、占位页、连不上
+
+三个「看起来下完了，其实没有」的坑，各有各的判据：
+
+| 现象 | 处理 |
+|---|---|
+| 同一章第一次只回 170 字、再要一次 1500 字（站点防采集） | 解析器判「正文过短」时自动补抓一次，谁长用谁 |
+| 正文是一句「正在手打中，客官请稍等片刻…」 | 判为占位页 → 记失败并写明原因，下次运行自动重试 |
+| 浏览器能打开，程序报 `10054 连接被重置` / SSL 握手失败 | 站点在 CDN 后面，直连被掐。用 `--proxy` 走你的代理 |
+
+```bash
+python -m novel_dl <url> --proxy http://127.0.0.1:7890   # Clash 默认 7890
+NOVEL_DL_PROXY_URL=http://127.0.0.1:7890 python -m novel_dl <url>
+```
+
+代理只在显式指定时生效（含并发模式），不指定时仍然是直连 —— 装了 Clash
+但国内站点不该被绕出去。占位页那类失败会出现在 `state.json` 的 `fail_log` 里，
+书架也照原话显示，不会再伪装成「已完成」。
+
 ## 手机也能用
 
 ```bash
@@ -176,7 +195,7 @@ books/<站点目录>/
 ## 稳定性是被测试证明的，不是声明
 
 ```bash
-# 全部套件，273 项断言，不依赖 pytest
+# 全部套件，284 项断言，不依赖 pytest
 python tests/test_all.py           # 21 项：功能 / 规则 / 网址纠错
 python tests/test_stability.py     # 21 项：并发 / 中断 / 崩溃恢复
 python tests/test_encoding.py      # 27 项：编码与乱码
@@ -186,7 +205,7 @@ python tests/test_progress_stats.py # 17 项：进度统计
 python tests/test_ratelimit.py     #  9 项：限速与封禁防护
 python tests/test_githubpages.py   # 34 项：GitHub Pages 型站点
 python tests/test_library.py       # 45 项：内容质检 / 书架 / 章节预览
-python tests/test_guard.py         # 32 项：加密站拦截 / 付费预览标记
+python tests/test_guard.py         # 43 项：加密站拦截 / 付费预览 / 占位页
 python tests/bench.py              # 性能基准（可注入延迟与失败率）
 ```
 
@@ -227,6 +246,9 @@ novel-dl https://example.com/book/123/ -f 100 -t 200
 # 被限速：调大间隔、调小并发
 novel-dl https://example.com/book/123/ --delay 3 -w 1
 
+# 浏览器能打开但程序连不上（10054 / SSL 失败）：走代理
+novel-dl https://example.com/book/123/ --proxy http://127.0.0.1:7890
+
 # 断了或网站更新了：重跑同一条命令
 novel-dl https://example.com/book/123/
 ```
@@ -242,6 +264,7 @@ output_dir = "books"
 driver     = "requests"
 delay      = 0.5
 workers    = 4
+proxy      = "http://127.0.0.1:7890"   # 可选
 ```
 
 优先级：命令行 > 配置文件 > 默认值。
