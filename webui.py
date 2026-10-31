@@ -388,36 +388,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def lan_addresses() -> list[str]:
-    """列出本机在局域网里的 IP，给手机访问用。"""
-    import socket
-    ips = []
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.2)
-        try:
-            s.connect(("10.255.255.255", 1))
-            ips.append(s.getsockname()[0])
-        finally:
-            s.close()
-    except Exception:
-        pass
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ip = info[4][0]
-            if not ip.startswith("127.") and ip not in ips:
-                ips.append(ip)
-    except Exception:
-        pass
-    return ips
-
-
 def main():
     ap = argparse.ArgumentParser(description="novel-dl 本地网页控制台")
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--no-open", action="store_true")
-    ap.add_argument("--lan", action="store_true",
-                    help="允许同一 Wi-Fi 下的手机访问（默认只允许本机）")
     a = ap.parse_args()
     os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -429,7 +403,7 @@ def main():
     nlog.log.addHandler(fh)
     nlog.log.addHandler(_StateHandler())
 
-    bind = "0.0.0.0" if a.lan else "127.0.0.1"
+    bind = "127.0.0.1"
     srv = None
     for port in range(a.port, a.port + 10):
         try:
@@ -445,11 +419,6 @@ def main():
     port = srv.server_address[1]
     self_url = f"http://127.0.0.1:{port}"
     nlog.info("已启动：%s", self_url)
-    if a.lan:
-        for ip in lan_addresses():
-            nlog.info("手机访问：http://%s:%d  （需与电脑同一 Wi-Fi）", ip, port)
-    else:
-        nlog.info("仅本机可访问。想让手机也能用，加 --lan 参数重启。")
 
     n_rules = len(rules.load_rules())
     nlog.info("站点规则：%d 条；未收录的站会自动分析网页结构", n_rules)

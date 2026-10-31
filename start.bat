@@ -16,8 +16,7 @@ if not defined PY (
     exit /b 1
 )
 
-rem --lan lets your phone join on the same Wi-Fi. Remove it if you do not need that.
-"%PY%" "%~dp0webui.py" --lan
+"%PY%" "%~dp0webui.py"
 if errorlevel 1 pause
 exit /b 0
 

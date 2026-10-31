@@ -225,7 +225,7 @@ details.adv[open]>summary::before{transform:rotate(45deg)}
 }
 .p-nav .btn{flex:1;min-height:40px;font-size:13px}
 
-/* ================= 手机 ================= */
+/* ================= 窄屏 ================= */
 
 
 @media (max-width:640px){
@@ -644,7 +644,7 @@ $('paste').onclick=async()=>{
   }catch(e){}
   try{ inp.focus(); if(document.execCommand('paste')) return; }catch(e){}
   inp.focus(); inp.select();
-  alert('浏览器不允许网页直接读剪贴板。\\n已选中输入框，按 Ctrl+V 粘贴（手机长按选粘贴）。');
+  alert('浏览器不允许网页直接读剪贴板。\\n已选中输入框，按 Ctrl+V 粘贴。');
 };
 
 $('opendir').onclick=async()=>{

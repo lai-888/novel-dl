@@ -40,7 +40,7 @@ novel-dl https://example.com/book/123/ -v                 # 调试日志
 
 中断、报错、站点更新之后，重跑同一条命令即可，已下载的章节不会重复请求。
 
-网页界面：`python webui.py`（加 `--lan` 可让同一 Wi-Fi 下的手机访问）。
+网页界面：`python webui.py`，浏览器打开 `http://127.0.0.1:8766`。
 
 两种会中断或标注的情况：
 
