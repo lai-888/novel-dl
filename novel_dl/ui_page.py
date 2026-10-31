@@ -332,6 +332,11 @@ details.adv[open]>summary::before{transform:rotate(45deg)}
               <option value="selenium">需要浏览器渲染</option>
             </select>
           </label>
+          <label class="field full" style="margin:0">
+            <span>Cookie（站点要人机验证时才填）</span>
+            <input class="input" id="cookie" autocomplete="off" spellcheck="false"
+                   placeholder="浏览器里过完验证后，从这里复制：F12 → 网络 → 请求头 → Cookie">
+          </label>
         </div>
         <p style="font-size:12px;color:var(--text-2);margin:14px 0 0" id="rulehint"></p>
       </details>
@@ -628,7 +633,8 @@ $('go').onclick=async()=>{
     driver:$('d').value,
     delay:$('delay').value?parseFloat($('delay').value):0,
     workers:$('workers').value?parseInt($('workers').value):2,
-    outdir:$('outdir').value.trim()
+    outdir:$('outdir').value.trim(),
+    cookie:$('cookie').value.trim()
   };
   const r=await(await fetch('/api/start',{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();

@@ -32,6 +32,24 @@ class DuplicatePage(Exception):
 
 PROBE_MAX_BYTES = 1500
 
+CAPTCHA_HINTS = (
+    "captcha.qq.com", "gtimg.com/qc", "geetest", "recaptcha", "hcaptcha",
+    "cf-challenge", "cf_chl_opt", "challenge-platform",
+    "--captcha", "滑动验证", "人机验证", "拖动滑块", "点击完成验证",
+)
+
+
+def captcha_reason(html: str):
+    """站点拦在了人机验证上：不是解析问题，程序也不该替人过验证。"""
+    if not html:
+        return None
+    low = html.lower()
+    hits = [h for h in CAPTCHA_HINTS if h in low]
+    if not hits:
+        return None
+    return ("站点要求人机验证（%s）。先在浏览器里打开这本书过一遍验证，"
+            "再把浏览器的 Cookie 贴进来（--cookie），或者换别的源" % hits[0])
+
 
 def probe_reason(html: str):
     """站点返回的是「反爬校验页」：一小段几乎空的 HTML 加一段跳转脚本。"""

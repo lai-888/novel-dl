@@ -5,7 +5,7 @@ import time
 
 from . import log
 from .fetchers import get_fetcher
-from .guard import EncryptedContent, probe_reason
+from .guard import EncryptedContent, captcha_reason, probe_reason
 from .parser import find_toc_url, get_parser
 from .progress import Progress
 from .rules import apply_url_fixes, find_rule
@@ -25,7 +25,7 @@ class Engine:
                  from_ch=None, to_ch=None, min_delay=None,
                  backup_url=None, stop_event=None, pause_event=None,
                  max_toc_pages=200, workers=1, auto_detect=True,
-                 proxy=None, on_toc=None):
+                 proxy=None, cookie=None, on_toc=None):
         book_url = (book_url or "").strip()
         if not book_url:
             raise SystemExit("没有提供小说目录页网址")
@@ -38,6 +38,9 @@ class Engine:
         if proxy:
             from .fetchers import set_proxy
             set_proxy(proxy)
+        if cookie:
+            from .fetchers import set_cookie
+            set_cookie(cookie)
         self.fetcher = get_fetcher(driver)
         if min_delay is not None:
             self.fetcher.MIN_DELAY = min_delay
@@ -143,6 +146,9 @@ class Engine:
         pr = probe_reason(html)
         if pr:
             raise SystemExit(f"{pr}。装了 selenium 之后加 -d selenium 再试。")
+        cr = captcha_reason(html)
+        if cr:
+            raise SystemExit(cr)
 
         try:
             title, toc = self.parser.parse_toc(html, self.book_url)
@@ -481,6 +487,9 @@ class Engine:
             url = b_url
 
         first_html = html
+        cr = captcha_reason(html)
+        if cr:
+            raise RuntimeError(cr)
 
         try:
             c_title, body = self.parser.parse_chapter(html)

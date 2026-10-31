@@ -213,6 +213,69 @@ def _cache_txt(out_dir):
             total += len([f for f in os.listdir(cache) if f.endswith(".txt")])
     return total
 
+def _test_cookie_roundtrip():
+    """本地起一个「没 cookie 就拦」的站，验证 cookie 真随请求发出去了。"""
+    import http.server
+    import threading
+
+    toc_html = ("<html><head><title>需要 cookie 的书</title></head><body>"
+                + "".join(f'<a href="/ch/{i}.html">第{i}章 标题{i}</a>'
+                          for i in range(1, 4))
+                + "</body></html>")
+
+    def chapter_html(name):
+        n = name.split(".")[0]
+        return ('<html><head><title>第{n}章 标题{n}</title></head><body>'
+                f'<h1>第{n}章 标题{n}</h1>'
+                '<div id="content">' + "本地假站点正文。" * 30 + '</div></body></html>')
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if "sid=ok" not in (self.headers.get("Cookie") or ""):
+                raw = b"<html><body>need cookie</body></html>"
+                self.send_response(403)
+            else:
+                body = toc_html if self.path == "/book/" else chapter_html(
+                    self.path.rsplit("/", 1)[-1])
+                raw = body.encode("utf-8")
+                self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}/book/"
+    out = os.path.join(_tmpdir("cookie_"), "books")
+    out2 = os.path.join(_tmpdir("cookie2_"), "books")
+    try:
+        fetchers.set_cookie("")
+        blocked = False
+        try:
+            Engine(base, out_dir=out, min_delay=0).run()
+        except SystemExit:
+            blocked = True
+        except Exception:
+            blocked = True
+        check("没有 cookie 时被站点拦住", blocked, "竟然下成功了")
+
+        fetchers.set_cookie("sid=ok; other=1")
+        txt = Engine(base, out_dir=out2, min_delay=0).run()
+        text = open(txt, encoding="utf-8").read()
+        check("带上 cookie 就下下来了", text.count("=== ") == 3,
+              str(text.count("=== ")))
+        check("正文来自那个站点", "本地假站点正文" in text)
+    finally:
+        fetchers.set_cookie("")
+        srv.shutdown()
+        shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+        shutil.rmtree(os.path.dirname(out2), ignore_errors=True)
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -400,6 +463,34 @@ def main():
     check("混进来的别章标题被删掉", "第2章 标题2" not in ch4, ch4[:80])
     check("这一章正文保留", "铁皮摩擦地面" in ch4, ch4[:80])
     shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+
+    print("\n[13] 人机验证与 cookie 传递")
+    from novel_dl.guard import captcha_reason
+    cap = ('<html><head><script>var seqid = "ab12__captcha"</script>'
+           '<script src="https://ssl.captcha.qq.com/TCaptcha.js"></script></head>'
+           '<body><div id="cap">拖动滑块完成验证</div></body></html>')
+    reason = captcha_reason(cap) or ""
+    check("认出人机验证页", "人机验证" in reason, reason)
+    check("提示了 cookie 的办法", "--cookie" in reason, reason)
+    check("正文页不误报验证", captcha_reason("<html><body><p>普通正文</p></body></html>") is None,
+          "普通页面被当成验证页了")
+    check("空响应不误报", captcha_reason("") is None)
+
+    from novel_dl import fetchers
+    jar = fetchers.parse_cookie("Cookie: a=1; b=2 ;\n c=3")
+    check("cookie 串能拆开", jar == {"a": "1", "b": "2", "c": "3"}, str(jar))
+    check("空串拆成空字典", fetchers.parse_cookie("") == {}, "空串没拆干净")
+
+    fetchers.set_cookie("sid=abc123; uid=9")
+    try:
+        f = fetchers.get_fetcher("requests")
+        check("requests 带着 cookie 走", f.session.cookies.get("sid") == "abc123",
+              str(dict(f.session.cookies)))
+    finally:
+        fetchers.set_cookie("")
+
+    print("\n[14] 带 cookie 真发得出去（本地假站点，不联网）")
+    _test_cookie_roundtrip()
 
     print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:

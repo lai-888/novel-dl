@@ -47,11 +47,29 @@ def build_parser() -> argparse.ArgumentParser:
                     help="走代理抓取，例如 http://127.0.0.1:7890。"
                          "浏览器能打开、程序报「连接被重置(10054)」时用它；"
                          "也可用环境变量 NOVEL_DL_PROXY_URL")
+    ap.add_argument("--cookie", default=None, metavar="TEXT",
+                    help="浏览器里已经过完人机验证的那份 Cookie（F12 → 网络 → 请求头里复制），"
+                         "也可以写成文件路径；也可用环境变量 NOVEL_DL_COOKIE")
     ap.add_argument("--reclean", action="store_true",
                     help="不联网，按当前规则重新清洗已下载的章节并重导出 TXT")
     ap.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
     ap.add_argument("-V", "--version", action="version", version=f"novel-dl {__version__}")
     return ap
+
+
+def _read_cookie(raw):
+    """--cookie 既可以是一整串，也可以是一个文件路径（省得每次贴）。"""
+    val = (raw or "").strip()
+    if not val:
+        return None
+    import os
+    if os.path.isfile(val):
+        try:
+            with open(val, encoding="utf-8") as f:
+                val = f.read().strip()
+        except OSError:
+            pass
+    return val or None
 
 
 def main(argv=None):
@@ -80,6 +98,7 @@ def main(argv=None):
         workers=args.workers if args.workers is not None else cfg["workers"],
         auto_detect=not args.no_auto,
         proxy=args.proxy or cfg.get("proxy"),
+        cookie=_read_cookie(args.cookie or cfg.get("cookie")),
     )
     if args.reclean:
         changed, path = engine.reclean()

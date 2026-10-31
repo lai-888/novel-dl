@@ -91,7 +91,7 @@ def resolve_out_dir(path: str | None) -> str:
 
 
 def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
-             out_dir=None):
+             out_dir=None, cookie=None):
     target_dir = resolve_out_dir(out_dir)
 
     with STATE_LOCK:                      # 占位和检查在同一把锁里，连点两次也只起一个
@@ -135,7 +135,7 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                              from_ch=from_ch, to_ch=to_ch, min_delay=delay,
                              backup_url=backup_url,
                              stop_event=stop_event, pause_event=pause_event,
-                             workers=workers, on_toc=on_toc)
+                             workers=workers, cookie=cookie, on_toc=on_toc)
             except SystemExit as e:      # 驱动没装、驱动名写错之类
                 log(f"启动失败：{e}")
                 with STATE_LOCK:
@@ -409,7 +409,8 @@ class Handler(BaseHTTPRequestHandler):
                            req.get("driver") or "requests", req.get("delay") or 0,
                            backup_url=(req.get("backup") or "").strip() or None,
                            workers=int(req.get("workers") or 1),
-                           out_dir=outdir)
+                           out_dir=outdir,
+                           cookie=(req.get("cookie") or "").strip() or None)
         if not started:
             return self._json(409, {"ok": False, "error": "已有任务在跑，等它结束再开新的"})
         self._json(200, {"ok": True, "outdir": outdir})

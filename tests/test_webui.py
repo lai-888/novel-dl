@@ -130,6 +130,10 @@ def main():
         check("有保存位置输入框", 'id="outdir"' in page, "缺少保存位置")
         check("有打开文件夹按钮", 'id="opendir"' in page, "缺少打开按钮")
         check("粘贴按钮有降级方案", "execCommand" in page and "Ctrl+V" in page)
+        check("高级选项里有 Cookie 填写口", 'id="cookie"' in page,
+              "站点要人机验证时没地方贴 cookie")
+        check("Cookie 会随下载请求发出去", "cookie:$('cookie')" in page,
+              "填了也不发")
         check("书架角标显示书本数",
               "BOOKS.length>99?'99+':String(BOOKS.length)" in page,
               "角标又变回章节数了")

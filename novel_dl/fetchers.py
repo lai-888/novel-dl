@@ -16,6 +16,7 @@ from .encoding import decode_body
 FETCHERS = {}
 
 _PROXY: str | None = None
+_COOKIE: str = ""
 
 
 def set_proxy(url: str | None):
@@ -23,6 +24,33 @@ def set_proxy(url: str | None):
     global _PROXY
     u = (url or "").strip()
     _PROXY = u or None
+
+
+def set_cookie(raw: str | None):
+    """人机验证过不去时，借用浏览器里已经通过验证的那份 cookie。"""
+    global _COOKIE
+    _COOKIE = (raw or "").strip()
+
+
+def get_cookie() -> str:
+    """命令行 > 环境变量 NOVEL_DL_COOKIE。"""
+    return _COOKIE or (os.environ.get("NOVEL_DL_COOKIE", "").strip())
+
+
+def parse_cookie(raw: str) -> dict:
+    """把 "a=1; b=2" 拆成字典，容忍 "Cookie:" 前缀和多余空白。"""
+    raw = (raw or "").strip()
+    if raw.lower().startswith("cookie:"):
+        raw = raw.split(":", 1)[1]
+    out = {}
+    for part in raw.replace("\n", ";").split(";"):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if k:
+            out[k] = v
+    return out
 
 
 def get_proxy() -> str | None:
@@ -141,6 +169,10 @@ class RequestsFetcher(BaseFetcher):
             self.session.trust_env = False
         else:
             self.session.trust_env = os.environ.get("NOVEL_DL_PROXY") == "1"
+        jar = parse_cookie(get_cookie())
+        if jar:
+            self.session.cookies.update(jar)
+            log.info("🍪 带上 %d 个 cookie", len(jar))
         self.insecure_hosts = set()    # 证书链不完整的站点，逐个放行
 
     def fetch(self, url: str, quick: bool = False) -> str:
@@ -255,8 +287,33 @@ class SeleniumFetcher(BaseFetcher):
                 pass
             self._local.driver = None
 
+    def _cookie_once(self, driver, url: str):
+        """cookie 要先进到域名下才能种；每个 host 只种一次。"""
+        jar = parse_cookie(get_cookie())
+        if not jar:
+            return
+        seen = getattr(self._local, "cookied", None)
+        if seen is None:
+            seen = set()
+            self._local.cookied = seen
+        parts = urlsplit(url)
+        host = parts.netloc
+        if host in seen:
+            return
+        driver.get(f"{parts.scheme}://{host}/")
+        ok = 0
+        for k, v in jar.items():
+            try:
+                driver.add_cookie({"name": k, "value": v})
+                ok += 1
+            except Exception as e:
+                log.debug("   cookie %s 没种上：%s", k, e)
+        seen.add(host)
+        log.info("🍪 浏览器里种了 %d/%d 个 cookie", ok, len(jar))
+
     def fetch(self, url: str, quick: bool = False) -> str:
         driver = self._driver()
+        self._cookie_once(driver, url)
         driver.get(url)
         if self.WAIT_SELECTOR:
             from selenium.webdriver.common.by import By
