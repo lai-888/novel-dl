@@ -26,6 +26,10 @@ class FillerPage(Exception):
     """拿到的不是正文，而是站点的占位提示（「正在手打中」之类）。"""
 
 
+class DuplicatePage(Exception):
+    """站点把别的章节正文又放了一遍（排版错位），取到的内容不属于本章。"""
+
+
 def detect_font_encryption(html: str, text: str) -> float:
     """返回正文里私有区字符的占比（0~1）。"""
     if not text or len(text) < MIN_SAMPLE:

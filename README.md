@@ -36,9 +36,16 @@ novel-dl https://example.com/book/123/ -v                 # 调试日志
 | `--backup URL` | 备用镜像地址 |
 | `--rules FILE` | 追加规则文件 |
 | `--config FILE` | 指定配置文件 |
+| `--reclean` | 不联网，按当前规则重新清洗已下载的章节并重导出 TXT |
 | `-v` | 输出调试日志 |
 
 中断、报错、站点更新之后，重跑同一条命令即可，已下载的章节不会重复请求。
+
+正文里混进广告、站点改版之后，用 `--reclean` 就地重洗，不用重下：
+
+```bash
+novel-dl https://example.com/book/123/ --reclean
+```
 
 网页界面：`python webui.py`，浏览器打开 `http://127.0.0.1:8766`。
 
@@ -78,7 +85,7 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 测试
 
-`tests/` 下有 10 个断言套件，共 303 项，不依赖 pytest，不联网：
+`tests/` 下有 10 个断言套件，共 327 项，不依赖 pytest，不联网：
 
 ```bash
 python tests/test_all.py    # 单个套件

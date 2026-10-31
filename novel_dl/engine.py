@@ -9,7 +9,7 @@ from .guard import EncryptedContent
 from .parser import get_parser
 from .progress import Progress
 from .rules import apply_url_fixes, find_rule
-from .textutil import safe_filename
+from .textutil import body_from, safe_filename
 
 LINE = "=" * 40
 
@@ -310,6 +310,33 @@ class Engine:
         return cands[-1]
 
     # ---------- 主流程 ----------
+    def reclean(self) -> tuple[int, str]:
+        """用当前的清洗规则重刷已有缓存再重导出。不联网，也不改已下载的内容。"""
+        p = self.prog
+        toc = p.state.get("toc") or []
+        if not toc:
+            raise SystemExit("这个目录下没有这本书的下载记录，先下载一次再来清洗")
+        p.recover_from_disk()
+        changed, cached = 0, 0
+        for i in range(len(toc)):
+            text = p.read_chapter(i)
+            if not text:
+                continue
+            cached += 1
+            head, sep, body = text.partition("\n\n")
+            if not sep:
+                continue
+            title = head.strip()
+            new_body = body_from(body.splitlines(), drop_title=title)
+            if not new_body:
+                continue
+            new_text = f"{title}\n\n{new_body}"
+            if new_text != text:
+                p.write_chapter(i, new_text)
+                changed += 1
+        log.info("🧽 重新清洗：有缓存 %d 章，改动 %d 章", cached, changed)
+        return changed, self.export(p.state.get("title") or "未命名", toc)
+
     def _drop_empty_prog(self):
         """GitHub 仓库型站点走专用流程，别在书架里留一个空的账本目录。"""
         try:
@@ -466,10 +493,13 @@ class Engine:
         text = f"{c_title}\n\n{body}"
 
         from .guard import FillerPage, filler_reason, looks_truncated, preview_reason
-        from .guard import check_encrypted
+        from .guard import DuplicatePage, check_encrypted
 
         check_encrypted(first_html, body, url)   # 有的站只加密部分章节
         self._encryption_checked = True
+
+        body = self._repeat_of_guard(i, body)
+        text = f"{c_title}\n\n{body}"
 
         fr = filler_reason(body)
         if fr:
@@ -492,9 +522,61 @@ class Engine:
 
     def _download_loop(self, toc, targets):
         """按 workers 并发抓取。"""
+        from .textutil import strip_page_mark
+        self._title_index = {}
+        for k, (t, _u) in enumerate(toc):
+            key = strip_page_mark(t).strip()
+            if key:
+                self._title_index.setdefault(key, k)
         if self.workers <= 1:
             return self._download_serial(toc, targets)
         return self._download_parallel(toc, targets)
+
+    def _title_index_get(self) -> dict:
+        return getattr(self, "_title_index", None) or {}
+
+    def _repeat_of_guard(self, i: int, body: str) -> str:
+        """站点常把前面某章的正文又放一遍。这种情况下报错，别把重复内容当正文存。"""
+        j = self._repeat_of(i, body)
+        if j is not None:
+            from .guard import DuplicatePage
+            raise DuplicatePage(
+                f"站点这一页放的是第{j + 1}章的正文（前面已下过），不是本章，已跳过")
+        return self._strip_foreign_heading(i, body)
+
+    def _strip_foreign_heading(self, i: int, body: str) -> str:
+        """正文开头的「第X章 xxx」如果是别的章标题（站点上一章链接混进来），删掉。"""
+        lines = body.splitlines()
+        if not lines:
+            return body
+        from .textutil import strip_page_mark
+        head = strip_page_mark(lines[0]).strip()
+        idx = self._title_index_get().get(head)
+        if idx is not None and idx != i:
+            return "\n".join(lines[1:]).lstrip("\n")
+        return body
+
+    def _repeat_of(self, i: int, body: str):
+        """返回被重复的章节下标：站点把前面某章的正文又放了一遍时用来识别。"""
+        lines = [l for l in body.splitlines() if l.strip()]
+        if len(lines) < 3:
+            return None
+        from .textutil import strip_page_mark
+        head = strip_page_mark(lines[0]).strip()
+        j = self._title_index_get().get(head)
+        if j is None or j == i:
+            return None
+        other = self.prog.read_chapter(j)
+        if not other:
+            return None
+        o_lines = [l for l in other.partition("\n\n")[2].splitlines() if l.strip()]
+        if not o_lines:
+            return None
+        mine = set(lines[1:])
+        common = sum(1 for l in o_lines if l in mine)
+        if common / min(len(o_lines), len(mine)) >= 0.9:
+            return j
+        return None
 
     def _record_success(self, i, text, c_title, toc, stats, preview=None):
         self.prog.write_chapter(i, text)

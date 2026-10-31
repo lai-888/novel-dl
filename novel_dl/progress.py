@@ -179,11 +179,18 @@ class Progress:
 
         known = set(self.state["done"])
         missing = cache_existed - known
-        if missing:
+        stale_failed = [i for i in self.state.get("failed", []) if i in cache_existed]
+        if missing or stale_failed:
             self.state["done"] = sorted(known | cache_existed)
+            for i in stale_failed:
+                self.state["failed"].remove(i)
+                (self.state.get("fail_log") or {}).pop(str(i), None)
             self._dirty = True
             self.save(force=True)
-            log.info("🔧 从磁盘恢复了 %d 章已完成记录（账本此前未落盘）", len(missing))
+            if missing:
+                log.info("🔧 从磁盘恢复了 %d 章已完成记录（账本此前未落盘）", len(missing))
+            if stale_failed:
+                log.info("🔧 有 %d 章缓存已存在但账本记着失败，已改回完成", len(stale_failed))
         return len(missing)
 
     # ---------- 批量落盘 ----------

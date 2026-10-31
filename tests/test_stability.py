@@ -356,6 +356,31 @@ def test_failure_budget():
         shutil.rmtree(out, ignore_errors=True)
 
 
+def test_ledger_vs_disk():
+    """缓存文件在、账本却记着失败 → 以磁盘为准。"""
+    print("\n[7] 账本与磁盘不一致时以磁盘为准")
+    out = tmpdir("ledger")
+    try:
+        p = Progress(out, BOOK)
+        p.set_book(BOOK, "一致性", [(f"第{i}章", f"http://x/{i}.html") for i in range(3)])
+        p.write_chapter(1, "第1章\n\n" + "正文" * 100)
+        p.mark_failed(1, "之前网络失败")
+        p.mark_failed(2, "还是失败")
+        p.save(force=True)
+
+        p2 = Progress(out, BOOK)
+        recovered = p2.recover_from_disk()
+        check("磁盘上的章被认回", 1 in p2.state["done"], str(p2.state["done"]))
+        check("对应的失败记录被清掉", 1 not in p2.state["failed"], str(p2.state["failed"]))
+        check("失败原因一并清掉", "1" not in (p2.state.get("fail_log") or {}),
+              str(p2.state.get("fail_log")))
+        check("真的没缓存的那章还在失败里", 2 in p2.state["failed"],
+              str(p2.state["failed"]))
+        check("补回的就是那一章", recovered == 1, str(recovered))
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+
+
 def test_cache_naming():
     """缓存文件名只认两种形态：5 位序号（旧）和 16 位摘要（新）。"""
     print("\n[10] 缓存文件名识别：纯数字摘要不当成旧序号")
@@ -380,6 +405,7 @@ def main():
     test_toc_reorder()
     test_failure_budget()
     test_cache_naming()
+    test_ledger_vs_disk()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for n in FAIL:

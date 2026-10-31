@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="走代理抓取，例如 http://127.0.0.1:7890。"
                          "浏览器能打开、程序报「连接被重置(10054)」时用它；"
                          "也可用环境变量 NOVEL_DL_PROXY_URL")
+    ap.add_argument("--reclean", action="store_true",
+                    help="不联网，按当前规则重新清洗已下载的章节并重导出 TXT")
     ap.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
     ap.add_argument("-V", "--version", action="version", version=f"novel-dl {__version__}")
     return ap
@@ -79,7 +81,12 @@ def main(argv=None):
         auto_detect=not args.no_auto,
         proxy=args.proxy or cfg.get("proxy"),
     )
+    if args.reclean:
+        changed, path = engine.reclean()
+        print(f"已重新清洗 {changed} 章，TXT：{path}")
+        return 0
     engine.run()
+    return 0
 
 if __name__ == "__main__":
     main()

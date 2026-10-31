@@ -163,6 +163,39 @@ class ShortFetcher(fetchers.BaseFetcher):
 fetchers.FETCHERS["fake-short"] = ShortFetcher
 
 
+DUP_BOOK = "https://dup.example/book/9/"
+DUP_A = "杭晚把窗帘拉开一道缝，海风灌进来，咸味很重。\n"
+DUP_B = "言溯怀站在走廊尽头，指间的烟灰落了一地。\n"
+DUP_C = "天亮了，楼下有人在搬箱子，铁皮摩擦地面。\n"
+
+
+class DupFetcher(fetchers.BaseFetcher):
+    """第 3 章：站点把第 1 章正文又放了一遍；第 4 章：开头混进别章标题但正文是自己的。"""
+
+    name = "fake-dup"
+    MIN_DELAY = MAX_DELAY = 0
+
+    def fetch(self, url):
+        if url == DUP_BOOK:
+            links = "".join(f'<a href="/book/9/{i}.html">第{i}章 标题{i}</a>'
+                            for i in range(1, 5))
+            return (f'<html><head><title>重复书_目录</title></head><body>'
+                    f'{links}</body></html>')
+        self.polite_sleep()
+        n = int(url.split("/")[-1].split(".")[0])
+        if n == 1:
+            return short_page(1, DUP_A * 30).replace("<h1>第1章</h1>", "<h1>第1章 标题1</h1>")
+        if n == 2:
+            return short_page(2, DUP_B * 30).replace("<h1>第2章</h1>", "<h1>第2章 标题2</h1>")
+        if n == 3:      # 站点错位：这一页是第 1 章的内容
+            return short_page(3, "第1章 标题1\n" + DUP_A * 30).replace(
+                "<h1>第3章</h1>", "<h1>第3章 标题3</h1>")
+        return short_page(4, "第2章 标题2\n" + DUP_C * 30).replace(
+            "<h1>第4章</h1>", "<h1>第4章 标题4</h1>")
+
+fetchers.FETCHERS["fake-dup"] = DupFetcher
+
+
 def _tmpdir(prefix):
     """临时目录放系统 TEMP：受限环境里工作区对衍生进程只读。"""
     base = os.path.join(tempfile.gettempdir(), "novel-dl-tests")
@@ -346,6 +379,26 @@ def main():
     bad = {c["no"]: c for c in bk["chapters"]}
     check("书架显示占位页的原因", "占位页" in " ".join(bad[2]["issues"]),
           str(bad[2]["issues"]))
+    shutil.rmtree(os.path.dirname(out), ignore_errors=True)
+
+    print("\n[12] 站点把别的章节重复贴过来")
+    out = os.path.join(_tmpdir("dup_"), "books")
+    Engine(DUP_BOOK, driver="fake-dup", out_dir=out, workers=1).run()
+    book_dir = os.path.join(out, "https_dup.example_book_9")
+    st = json.load(open(os.path.join(book_dir, "state.json"), encoding="utf-8"))
+    check("重复页那章记为失败", 2 in st["failed"], str(st["failed"]))
+    reason = (st.get("fail_log") or {}).get("2", "")
+    check("原因写明是别的章节", "第1章" in reason and "正文" in reason, reason)
+    ch3 = os.path.join(book_dir, "cache", chapter_key(st["toc"][2][1]) + ".txt")
+    check("重复内容没有落盘", not os.path.exists(ch3), "写进去了")
+    bk = library.scan(out)[0]
+    issues = {c["no"]: c["issues"] for c in bk["chapters"]}
+    check("书架能看出原因", "第1章" in " ".join(issues[3]), str(issues[3]))
+    ch4 = open(os.path.join(book_dir, "cache",
+                            chapter_key(st["toc"][3][1]) + ".txt"),
+               encoding="utf-8").read()
+    check("混进来的别章标题被删掉", "第2章 标题2" not in ch4, ch4[:80])
+    check("这一章正文保留", "铁皮摩擦地面" in ch4, ch4[:80])
     shutil.rmtree(os.path.dirname(out), ignore_errors=True)
 
     print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")

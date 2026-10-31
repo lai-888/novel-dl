@@ -193,10 +193,42 @@ def test_url_fixes():
 # ---------------------------------------------------------------------------
 
 
+def test_chapter_boilerplate():
+    """章节页的工具栏、站点域名、推荐位、重复标题都不能混进正文。"""
+    print("\n[4] 正文清洗：广告与页面杂项要拦掉")
+    from novel_dl.parser import GenericParser
+
+    body_text = "".join(f"她推开窗，风灌进来，吹动手边的稿纸{i}。\n" for i in range(8))
+    html = f"""<html><head><title>第9章 替罪羊_西瓜书屋</title></head><body>
+    <div class="C0NTENT">
+      <div class="toolbar"><a>首页</a><a>书架</a><a>阅读记录</a><a>搜索小说</a>
+        <a>封面</a><a>繁体</a><a>〔加入书签〕</a></div>
+      <div id="C0NTENT" class="RBGsectionThree-content">
+        <p>第9章 替罪羊(1/2)</p>
+        <p>本站新（短）域名：xiguashuwu.com</p>
+        <p>第9章 替罪羊</p>
+        {''.join(f'<p>{line}</p>' for line in body_text.splitlines())}
+      </div>
+      <div class="recommend"><h3>热门小说推荐</h3>
+        <a>老师别哭请摆好</a><a>长日光阴</a><a>清和</a>
+        <h3>最近更新小说</h3><a>小满（年上）</a><a>天妒（修真1v1 H）</a>
+      </div>
+    </div></body></html>"""
+
+    title, body = GenericParser().parse_chapter(html)
+    check("标题去掉了页码标记", title == "第9章 替罪羊", title)
+    for word in ("封面", "繁体", "加入书签", "阅读记录", "搜索小说",
+                 "域名", "热门小说推荐", "最近更新小说", "老师别哭", "长日光阴"):
+        check(f"正文里没有「{word}」", word not in body, body[:120])
+    check("正文保留了真正的段落", "她推开窗" in body, body[:120])
+    check("重复的 (1/2) 标题行被删掉", "(1/2)" not in body, body[:120])
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
     test_url_fixes()
+    test_chapter_boilerplate()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

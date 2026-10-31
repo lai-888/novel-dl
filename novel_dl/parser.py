@@ -195,6 +195,10 @@ class GenericParser(BaseParser):
                  "加入书签", "投推荐票", "上一章", "下一章", "上一页", "下一页",
                  "目录", "首页", "书架", "排行", "顶部", "底部"}
 
+    CONTENT_HINT = re.compile(r"content|chapter|readtxt|read|article|novel|booktxt|text", re.I)
+
+    _LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t"})
+
     @staticmethod
     def clean_toc_title(text: str) -> str:
         """目录标题净化：剥离图标字体字符，并把因此残缺的「第X章」补回来。"""
@@ -349,14 +353,7 @@ class GenericParser(BaseParser):
                 title = "_".join(clean + page_parts[:1])
         title = strip_page_mark(title) or (title_hint or "未知章节")
 
-        container = None
-        for sel in self.CONTENT_TAGS:
-            cand = soup.select_one(sel)
-            if cand and len(cand.get_text(strip=True)) > 200:
-                container = cand
-                break
-        if container is None:
-            container = self._longest_block(soup)
+        container = self._pick_container(soup)
         if container is None:
             raise ValueError("正文容器定位失败")
 
@@ -367,6 +364,33 @@ class GenericParser(BaseParser):
         if len(body) < 50:
             raise ValueError("正文过短，疑似解析失败或触发了反爬")
         return title, body
+
+    def _pick_container(self, soup):
+        """找正文容器：先认常见选择器，再按 id/class 关键词取「最贴近正文」的那个。"""
+        for sel in self.CONTENT_TAGS:
+            try:
+                cand = soup.select_one(sel)
+            except Exception:
+                continue
+            if cand is not None and len(cand.get_text(strip=True)) > 200:
+                return cand
+
+        cands = []
+        for el in soup.find_all(["div", "section", "article", "td"]):
+            hint = " ".join(filter(None, [el.get("id") or "",
+                                          " ".join(el.get("class") or [])]))
+            if not hint:
+                continue
+            if not self.CONTENT_HINT.search(hint.lower().translate(self._LEET)):
+                continue
+            n = len(el.get_text(strip=True))
+            if n > 200:
+                cands.append((n, el))
+        if cands:
+            top = max(n for n, _ in cands)
+            # 外层包裹（带工具栏、推荐位）文字更多；取仍有八成正文的最内层
+            return min((n, el) for n, el in cands if n >= top * 0.8)[1]
+        return self._longest_block(soup)
 
     @staticmethod
     def _longest_block(soup):
