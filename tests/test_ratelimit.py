@@ -11,11 +11,13 @@
 跑：python tests/test_ratelimit.py
 """
 import io
+import os
 import sys
 import threading
 import time
 
-sys.path.insert(0, r"C:\Users\31383\Desktop\novel-dl")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from novel_dl.engine import Engine  # noqa: E402

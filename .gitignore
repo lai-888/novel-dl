@@ -2,6 +2,8 @@
 books/
 logs/
 tests/.tmp/
+# 临时诊断脚本（排查问题时随手写的 _diag_*.py）与抓下来的样本字体
+tests/_*
 
 # Python
 __pycache__/
@@ -16,6 +18,8 @@ venv/
 # 个人规则文件：别把你在用的站点规则提交上来
 sites.json
 novel-dl.toml
+# 自动推断出来的站点规则缓存（机器相关，不该进仓库）
+.novel-dl-learned.json
 
 # 编辑器 / 系统
 .vscode/

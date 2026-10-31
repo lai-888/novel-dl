@@ -11,9 +11,12 @@
 跑：python tests/test_autodetect.py
 """
 import io
+import os
 import sys
 
-sys.path.insert(0, r"C:\Users\31383\Desktop\novel-dl")
+# 路径跟着仓库走，不要写死本机绝对路径（否则别人 clone 下来跑不起来）
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from bs4 import BeautifulSoup  # noqa: E402

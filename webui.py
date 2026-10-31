@@ -185,16 +185,28 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                 else:
                     STATE["message"] = f"下载完成：《{title}》"
         except (SystemExit, KeyboardInterrupt) as e:
-            log(f"任务已停止：{e}")
-            with STATE_LOCK:
-                STATE["message"] = "已停止，进度已保存。再点一次「开始下载」会接着下。"
-            try:
-                txt = eng.export(eng.prog.state.get("title") or "未命名",
-                                 eng.prog.state.get("toc") or [])
+            blocked = getattr(eng, "blocked", None)
+            if blocked is not None:
+                # 字体加密站：不是「停止」，是根本没有可下载的正文。
+                # 必须说清原因，否则用户会反复重试同一个必败的网址。
+                # 也不能导出 TXT —— 导出只会得到一个空文件，那正是要避免的「假成功」。
+                from novel_dl.guard import explain
+                for line in explain(blocked).splitlines():
+                    log(line)
                 with STATE_LOCK:
-                    STATE["result_txt"] = txt
-            except Exception:
-                pass
+                    STATE["message"] = "这个网站下载不了：正文被字体加密（网页能看，程序取不到文字）"
+                    STATE["result_txt"] = None
+            else:
+                log(f"任务已停止：{e}")
+                with STATE_LOCK:
+                    STATE["message"] = "已停止，进度已保存。再点一次「开始下载」会接着下。"
+                try:
+                    txt = eng.export(eng.prog.state.get("title") or "未命名",
+                                     eng.prog.state.get("toc") or [])
+                    with STATE_LOCK:
+                        STATE["result_txt"] = txt
+                except Exception:
+                    pass
         except Exception as e:
             log(f"任务失败：{e}")
             with STATE_LOCK:

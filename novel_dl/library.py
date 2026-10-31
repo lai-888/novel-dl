@@ -63,6 +63,22 @@ def _scan_standard(path, slug, state_path, cache_dir) -> dict:
     failed = set(state.get("failed") or [])
     title = state.get("title") or slug
 
+    # 账本是批量落盘的，可能落后于磁盘：以「文件是否存在」为准。
+    # 不这样做，已下好的章节会被误报成「尚未下载」。
+    on_disk = set()
+    try:
+        for name in os.listdir(cache_dir):
+            if name.endswith(".txt"):
+                try:
+                    idx = int(name[:-4])
+                except ValueError:
+                    continue
+                if os.path.getsize(os.path.join(cache_dir, name)) > 32:
+                    on_disk.add(idx)
+    except OSError:
+        pass
+    done |= on_disk
+
     reports = []
     for i, (ctitle, _url) in enumerate(toc):
         if i in done:

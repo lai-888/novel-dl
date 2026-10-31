@@ -31,9 +31,9 @@ BODY = "夜色沉沉，他提灯走过长街。" * 20
 N = 12
 
 
-def toc_html():
+def toc_html(prefix="/book/1"):
     return ('<html><head><title>界面测试小说_在线阅读</title></head><body><dl>' +
-            "".join(f'<dd><a href="/book/1/{i}.html">第{i}章 测试章节{i}</a></dd>'
+            "".join(f'<dd><a href="{prefix}/{i}.html">第{i}章 测试章节{i}</a></dd>'
                     for i in range(1, N + 1)) + '</dl></body></html>')
 
 
@@ -42,11 +42,27 @@ def ch_html(n):
             f'<h1>第{n}章 测试章节{n}</h1><div id="content">{BODY}</div></body></html>')
 
 
+# 字体加密站：正文里的汉字被替换成私有区占位符，并声明了专用字体
+ENC_FONT = ('<style>@font-face{font-family:DNMrHsV173Pd4pgy;'
+            'src:url(https://cdn.example/f.woff2)format("woff2")}</style>')
+ENC_LINE = "“喜\ue483喜\ue483，\ue423喜\ue483！”雷火馆\ue44d院，紧闭\ue4f3院"
+
+
+def enc_ch_html(n):
+    return (f'<html><head><title>第{n}章</title>{ENC_FONT}</head><body>'
+            f'<h1>第{n}章</h1><div id="content">{ENC_LINE * 100}</div></body></html>')
+
+
 class FakeSite(BaseHTTPRequestHandler):
     def do_GET(self):
-        # 目录页：/book/1/ 或 /book/2/（去掉末尾斜杠后判断）
-        if self.path.rstrip('/') in ('/book/1', '/book/2'):
-            body = toc_html().encode()
+        # 目录页：/book/1/ 或 /book/2/（去掉末尾斜杠后判断）；/book/3/ 是加密站
+        if self.path.rstrip('/') in ('/book/1', '/book/2', '/book/3'):
+            body = toc_html(self.path.rstrip('/')).encode()
+        elif self.path.startswith('/book/3/'):
+            n = self.path.rstrip('.html').split('/')[-1]
+            if not n.isdigit():
+                self.send_response(404); self.end_headers(); return
+            body = enc_ch_html(int(n)).encode()
         else:
             n = self.path.rstrip('.html').split('/')[-1]
             if not n.isdigit():
@@ -86,6 +102,8 @@ def main():
     book_url = f"http://127.0.0.1:{site_port}/book/1/"
     # 第二本书（同站点不同路径），用于测试自定义保存目录
     book_url2 = f"http://127.0.0.1:{site_port}/book/2/"
+    # 第三本书：字体加密站，用于验证界面会说清「下不了」而不是假装下完
+    enc_url = f"http://127.0.0.1:{site_port}/book/3/"
 
     # 2. 起 webui（用独立进程内服务，避免 Start-Process 时序问题）
     import webui
@@ -223,6 +241,36 @@ def main():
             check("opendir 返回 JSON", "ok" in j, str(j))
         except Exception as e:
             check("opendir 返回 JSON", False, repr(e))
+
+        print("\n[12] 字体加密站：界面必须说清「下不了」")
+        before = [f for _, _, fs in os.walk(out) for f in fs if f.endswith(".txt")]
+        enc_out = os.path.join(out, "加密站")
+        r = api(base, "/api/start", {"url": enc_url, "driver": "requests",
+                                     "delay": 0, "workers": 4,
+                                     "outdir": enc_out})
+        check("start 返回 ok", r.get("ok") is True, str(r))
+        # 先等任务真的跑起来，再等它结束 —— 否则会读到上一次的状态
+        t0 = time.time()
+        while time.time() - t0 < 10:
+            if api(base, "/api/status")["running"]:
+                break
+            time.sleep(0.05)
+        deadline = time.time() + 40
+        last4 = None
+        while time.time() < deadline:
+            last4 = api(base, "/api/status")
+            if not last4["running"]:
+                break
+            time.sleep(0.3)
+        check("任务已结束", last4["running"] is False)
+        check("文案是「下载不了」而不是「已停止」",
+              "下载不了" in last4["message"], last4["message"])
+        check("文案说明了原因", "字体加密" in last4["message"], last4["message"])
+        enc_txts = [f for _, _, fs in os.walk(enc_out) for f in fs if f.endswith(".txt")]
+        check("一个章节文件都没产生", not enc_txts, str(enc_txts))
+        check("其余书不受影响",
+              len([f for _, _, fs in os.walk(out) for f in fs if f.endswith(".txt")])
+              >= len(before), "已有文件被动了")
     finally:
         srv.shutdown()
         site.shutdown()

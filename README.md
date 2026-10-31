@@ -38,6 +38,39 @@ novel-dl <url> --no-auto    # 关掉推断，只用通用解析器
 | 声明 gb2312/gbk 但实为超集 | 一律升级到 gb18030（`big5`→`big5hkscs`，`shift_jis`→`cp932`），避免严格解码炸裂 |
 | 图标字体混淆 / 零宽字符 | 剥离私有区 U+E000–F8FF、零宽字符、U+FFFD；正文与标题都过这一层 |
 
+## 字体加密站：直接拒绝，而不是下坏
+
+有些站点（如番茄小说）把正文里的常用汉字替换成私有区码位（U+E4xx），
+只有浏览器加载它专用 `@font-face` 字体时才显示成字。程序拿到的是占位符，
+而且会被「剥私有区字符」这一步清洗掉，于是落盘的正文变成：
+
+```
+喜喜，喜！」雷火馆院，紧闭院哐猛推
+```
+
+看着通顺，其实**缺了一半字** —— 比明显乱码更危险，因为用户直到打开 TXT 才发现。
+
+正确的产品行为不是「尽力解码」，而是**抓第一页就认出来，整本停下**
+（`novel_dl/guard.py`）：
+
+| 判据 | 内容 |
+|---|---|
+| 主判据 | 原始 HTML 里私有区字符 ≥ 300 且声明了 `@font-face` |
+| 次判据 | 解析出的正文里私有区字符占比 > 15%（兜底） |
+
+两个关键细节：
+
+- **检测必须在解析之前看原始 HTML**。清洗之后占位符已被删掉，正文看起来
+  通顺，再怎么检查都查不出来。
+- **并发模式下先同步跑第一章做预检**。否则并发窗口已经起飞，
+  会先落下几个半残章节 —— 用户看到的就是「下了几十章，全是缺字的正文」。
+
+命中后退出码 `2`，命令行打印原因，网页端显示
+「这个网站下载不了：正文被字体加密（网页能看，程序取不到文字）」。
+一个章节文件都不会产生。
+
+这是站点有意的版权保护措施，程序不去绕它。
+
 ## 手机也能用
 
 ```bash
@@ -107,9 +140,18 @@ books/<站点目录>/
 ## 稳定性是被测试证明的，不是声明
 
 ```bash
-python tests/test_all.py         # 21 项：功能 / 规则 / 网址纠错
-python tests/test_stability.py   # 21 项：并发 / 中断 / 崩溃恢复
-python tests/bench.py            # 性能基准（可注入延迟与失败率）
+# 全部套件，256 项断言，不依赖 pytest
+python tests/test_all.py           # 21 项：功能 / 规则 / 网址纠错
+python tests/test_stability.py     # 21 项：并发 / 中断 / 崩溃恢复
+python tests/test_encoding.py      # 27 项：编码与乱码
+python tests/test_autodetect.py    # 29 项：自动推断站点规则
+python tests/test_webui.py         # 38 项：网页端接口与页面（含加密站提示）
+python tests/test_progress_stats.py # 17 项：进度统计
+python tests/test_ratelimit.py     #  9 项：限速与封禁防护
+python tests/test_githubpages.py   # 34 项：GitHub Pages 型站点
+python tests/test_library.py       # 40 项：内容质检 / 书架 / 章节预览
+python tests/test_guard.py         # 20 项：字体加密站拦截
+python tests/bench.py              # 性能基准（可注入延迟与失败率）
 ```
 
 稳定性测试专门攻击边界情况：

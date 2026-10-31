@@ -8,9 +8,11 @@
 跑：python tests/test_encoding.py
 """
 import io
+import os
 import sys
 
-sys.path.insert(0, r"C:\Users\31383\Desktop\novel-dl")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from novel_dl.encoding import (decode_body, looks_garbled,  # noqa: E402

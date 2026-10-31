@@ -13,9 +13,11 @@
 跑：python tests/test_githubpages.py
 """
 import io
+import os
 import sys
 
-sys.path.insert(0, r"C:\Users\31383\Desktop\novel-dl")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from novel_dl.githubpages import (chapter_order_key, cn_to_int,  # noqa: E402

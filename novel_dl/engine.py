@@ -12,6 +12,7 @@ import time
 
 from . import log
 from .fetchers import get_fetcher
+from .guard import EncryptedContent
 from .parser import get_parser
 from .progress import Progress
 from .rules import apply_url_fixes, find_rule
@@ -55,6 +56,8 @@ class Engine:
         # 目录解析完成后回调 (书名, 章节总数)。webui 靠它显示「共 N 章」，
         # 否则在网络慢/全部已下载的情况下总数会一直停在 0。
         self.on_toc = on_toc
+        self._encryption_checked = False   # 字体加密只检测一次（首章）
+        self.blocked = None                # 被拦下的原因（EncryptedContent 实例）
         self.backup_url = (backup_url or "").strip() or None
         self.backup_toc = None
         self.stop_event = stop_event
@@ -356,6 +359,20 @@ class Engine:
         except SystemExit as e:
             log.info("\n⏹ 已停止：%s（进度已保存，重跑同命令可续传）", e)
             done_now, dead = 0, []
+        except EncryptedContent as e:
+            # 字体加密站：立刻停，不产出任何无效文件
+            from .guard import explain
+            self.blocked = e      # 给上层（webui）取用，好显示同样的说明
+            log.error("")
+            log.error("=" * 52)
+            log.error("这个网站无法下载")
+            log.error("=" * 52)
+            for line in explain(e).splitlines():
+                log.error("%s", line)
+            log.error("")
+            log.error("已下载成功的章节会保留（本次新增 0 章）。")
+            p.flush()
+            raise SystemExit(2)
         finally:
             p.flush()   # 批量落盘模式下的兜底：异常退出也不丢账本
 
@@ -421,6 +438,14 @@ class Engine:
             html = self._get(b_url, quick=quick)
             url = b_url
 
+        # 字体加密检测：必须在解析**之前**看原始 HTML。
+        # 解析时 textutil 会剥掉私有区字符，加密正文会变成「喜喜，喜！」
+        # 这种看似通顺实则残缺的东西，清洗后再检测就查不出来了。
+        if not self._encryption_checked:
+            from .guard import check_encrypted
+            check_encrypted(html, "", url)   # 命中则抛 EncryptedContent
+            self._encryption_checked = True
+
         c_title, body = self.parser.parse_chapter(html)
 
         # 章节内分页跟随（/ID、/ID-2、/ID_2 …），上限 30 页
@@ -474,6 +499,9 @@ class Engine:
             try:
                 text, c_title = self._fetch_chapter(i, toc)
                 self._record_success(i, text, c_title, toc, stats)
+            except EncryptedContent:
+                # 字体加密是站点特性，不是这一章的问题：立刻向上抛，整本停下
+                raise
             except Exception as e:
                 self._record_failure(i, toc, e, dead, stats)
                 if stats["conn_fail_streak"] >= 5:
@@ -509,6 +537,21 @@ class Engine:
         retry = []
         last_error = {}          # 每章最后一次的真实异常，用于最终记账
 
+        # 字体加密站预检：先同步跑第一章。
+        # 命中就整本停在上马之前 —— 否则并发窗口已经起飞，会先落下几个
+        # 半残的章节文件，用户看到的就是「下了几十章，全是缺字的正文」。
+        if targets and not self._encryption_checked:
+            i0 = targets[0]
+            try:
+                self._gate()
+                text, c_title = self._fetch_chapter(i0, toc)
+                self._record_success(i0, text, c_title, toc, stats)
+                targets = targets[1:]
+            except EncryptedContent:
+                raise
+            except Exception:
+                pass    # 网络抖动之类：留给下面的并发批次去重试
+
         def run_batch(indices, quick):
             """跑一批。成功的直接落盘，失败的根据 quick 决定进 retry 还是记死。"""
             queue = list(indices)
@@ -526,6 +569,12 @@ class Engine:
                         try:
                             text, c_title = fut.result()
                             self._record_success(i, text, c_title, toc, stats)
+                        except EncryptedContent:
+                            # 站点级问题，不是这一章的问题：立刻整本停下。
+                            # 先撤销尚未开跑的排队任务，别让它们继续浪费请求。
+                            for f in inflight:
+                                f.cancel()
+                            raise
                         except Exception as e:
                             last_error[i] = e
                             if quick:
