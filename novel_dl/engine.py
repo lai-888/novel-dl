@@ -1,4 +1,4 @@
-"""下载引擎 —— 编排一切：目录解析 → 增量对比 → 逐章抓取 → 战术跳过 → 合并 TXT。
+"""下载引擎：目录解析 → 增量对比 → 逐章抓取 → 失败记账 → 合并 TXT。
 
 引擎只负责流程，不负责「怎么抓」和「怎么解析」：
     抓取策略  -> fetchers.py 的插件
@@ -538,7 +538,7 @@ class Engine:
     def _record_failure(self, i, toc, err, dead, stats):
         self.prog.mark_failed(i, str(err))
         dead.append((i + 1, toc[i][0], str(err)))
-        log.warning("  ☠ [%d] %s —— 战术跳过（%s），已记录在案",
+        log.warning("  ☠ [%d] %s —— 跳过（%s），已记录在案",
                     i + 1, toc[i][0], str(err)[:80])
         if any(k in str(err) for k in ("Connection", "timed out", "Reset",
                                        "Max retries", "SSL", "10054", "10061")):

@@ -31,7 +31,7 @@ def _harden_console():
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="novel-dl",
-        description="小说下载器 · 断点续传 / 增量更新 / 战术跳过")
+        description="小说下载器：按目录页下载整本小说为 TXT")
     ap.add_argument("url", help="小说目录页网址")
     ap.add_argument("-f", "--from", dest="from_ch", type=int, metavar="N",
                     help="起始章节号（从 1 开始）")

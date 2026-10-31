@@ -140,7 +140,7 @@ def main():
         check("首页 200", True)
         check("主按钮存在", 'id="go"' in page)
         check("高级选项可折叠", "<details" in page and "<summary" in page)
-        check("无内部黑话", "战术跳过" not in page and "阵亡" not in page)
+        check("无内部黑话", "阵亡" not in page)
         check("有粘贴按钮", 'id="paste"' in page, "缺少粘贴按钮")
         check("有保存位置输入框", 'id="outdir"' in page, "缺少保存位置")
         check("有打开文件夹按钮", 'id="opendir"' in page, "缺少打开按钮")
@@ -179,7 +179,6 @@ def main():
         lines = last["lines"]
         check("日志非空", len(lines) > 0, str(len(lines)))
         joined = "\n".join(lines)
-        check("日志里没有「战术跳过」", "战术跳过" not in joined)
         check("日志里没有「阵亡」", "阵亡" not in joined)
         check("日志里没有「断点续传中」", "断点续传中" not in joined)
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "novel-dl"
 version = "1.1.0"
-description = "小说下载器：断点续传 / 增量更新 / 战术跳过"
+description = "小说下载器：按目录页下载整本小说为 TXT"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

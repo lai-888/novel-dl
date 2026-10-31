@@ -12,7 +12,7 @@ TOC = ('<html><head><title>测试小说_在线阅读</title></head><body>' +
 def chapter(n):
     body = ('<html><head><title>第{n}章 夜行{n}</title></head><body><h1>第{n}章 夜行{n}</h1>'
             '<div id="content">' + '夜色沉沉，他提灯走过长街。' * 40 + '</div></body></html>').format(n=n)
-    if n == 3:  # 坏章节：正文过短，触发战术跳过
+    if n == 3:  # 坏章节：正文过短，按失败跳过
         body = '<html><body><div id="content">短</div></body></html>'
     return body
 
