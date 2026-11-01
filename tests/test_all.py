@@ -531,6 +531,56 @@ def test_autodetect_narrowing():
               [x[0] for x in toc][:3])
 
 
+def test_pager_vs_next_chapter():
+    """章节网址长得像页码时，别把下一章当成同一章的下一页。"""
+    print("\n[12] 下一页 vs 下一章")
+    from novel_dl.engine import Engine
+
+    # 网址：book_read_77_1002.html → 1003.html 正好是 +1，光看网址会被骗
+    cur = "http://a.example/book_read_77_1002.html"
+    nxt = "http://a.example/book_read_77_1003.html"
+    page = ('<html><body><div id="content">正文内容。</div>'
+            '<a href="/book_read_77_1003.html">下一页</a></body></html>')
+    got = Engine._next_page_link(page, cur)
+    check("「下一页」+ 编号相邻 会被当成同一章的分页",
+          got is not None and Engine._is_next_page(cur, got[0]), got)
+
+    chap = ('<html><body><div id="content">正文内容。</div>'
+            '<a href="/book_read_77_1003.html">下一章</a></body></html>')
+    check("「下一章」不算分页", Engine._next_page_link(chap, cur) is None,
+          Engine._next_page_link(chap, cur))
+
+    from novel_dl.engine import _same_chapter
+    check("同一章的不同分页算同一章",
+          _same_chapter("第3章 夜色(1/2)", "第3章 夜色(2/2)") is True)
+    check("不同章节不算同一章",
+          _same_chapter("第3章 夜色", "第4章 清晨") is False)
+    check("标题空着时判不了（返回 None，别乱接）",
+          _same_chapter("", "第4章 清晨") is None)
+
+
+def test_no_rule_needed():
+    """仓库不带站点名单：没见过、也没规则的站，照样要能取到正文。"""
+    print("\n[13] 没有站点规则也能解析")
+    from novel_dl.parser import get_parser
+
+    page = ('<html><head><title>某书_第三卷 第二章 雨夜的路口 在线无广告版阅读-某站</title>'
+            '</head><body>'
+            '<div id="wrap"><nav><a href="/">首页</a><a href="/cat/1">分类大全</a></nav>'
+            '<h1>书籍下架通知</h1>'
+            '<div id="content">'
+            + "雨点砸在铁皮雨棚上，她把伞往我这边偏了偏，自己半边肩膀都湿了。" * 12
+            + '</div><div class="footer">版权所有</div></div></body></html>')
+    url = "https://brand-new-site.example/book/info/1"
+    p = get_parser(url, fetcher=None, auto=False)
+    check("没有规则的站走通用解析", type(p).__name__ == "GenericParser", type(p).__name__)
+    title, body = p.parse_chapter(page)
+    check("正文取到 #content 里的话", "雨点砸在铁皮雨棚上" in body, body[:40])
+    check("没有混进导航和页脚",
+          "首页" not in body and "版权所有" not in body, body[:60])
+    check("章节名从 <title> 里取", title.startswith("第三卷"), title)
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -543,6 +593,8 @@ def main():
     test_user_agent()
     test_toc_filter_and_title()
     test_autodetect_narrowing()
+    test_pager_vs_next_chapter()
+    test_no_rule_needed()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

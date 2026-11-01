@@ -20,6 +20,26 @@ CHAPTER_LIKE = re.compile(
     r"^(https?://[^/]+/(?:book|books|novel|xiaoshuo)/\d+)/\d+\.html?$")
 
 
+NEXT_CHAPTER_WORD = re.compile(r"下一?[章节回卷幕话]|下章|后一章|下一篇|下一话")
+PAGER_SAFE = re.compile(r"页|page|pager|next")
+
+
+def _bare_title(title: str) -> str:
+    """去掉「(2/3)」这类分页标记，剩下的才是章名。"""
+    t = re.sub(r"[（(]\s*\d+\s*/\s*\d+\s*[)）]", "", title or "")
+    return re.sub(r"\s+", "", t).strip()
+
+
+def _same_chapter(a: str, b: str):
+    """两个标题是不是同一章（分页标记不算区别）。判不了时返回 None。"""
+    ba, bb = _bare_title(a), _bare_title(b)
+    if not ba or not bb:
+        return None
+    if ba == bb:
+        return True
+    return False
+
+
 CHAPTER_MARK = re.compile(
     r"第[0-9零一二三四五六七八九十百千万两]+[章节回话卷幕]|序章|终章|序言|尾声|"
     r"后记|前言|插图|番外|短篇|间章|外传|完结|公告")
@@ -338,8 +358,14 @@ class Engine:
                 continue
             aid = a.get("id") or ""
             txt = a.get_text(strip=True)
+            if NEXT_CHAPTER_WORD.search(txt):
+                continue        # 「下一章」是下一个章节，不是同一章的下一页
             if aid in ("next_url", "next_page", "pager_next") or "下一页" in txt:
                 cands.append((urljoin(base_url, a["href"]), txt))
+            else:
+                continue
+            if not PAGER_SAFE.search(txt) and not aid:
+                cands.pop()     # 文字里没有「页」的意思，不敢当分页
         if not cands:
             return None
         if base_url:
@@ -544,11 +570,15 @@ class Engine:
             page_url = nxt[0]
             try:
                 html = self._get(page_url)
-                _, body2 = self.parser.parse_chapter(html)
+                title2, body2 = self.parser.parse_chapter(html)
             except Exception as e_page:
                 # 分页的最后一页常是「未完」「请订阅」之类，取不到就算了，
                 # 不能因为这一页把整章判成失败。
                 log.debug("分页第 %d 页取不到正文（%s），到此为止", pages + 1, e_page)
+                break
+            if _same_chapter(c_title, title2) is False:
+                log.debug("下一页其实是另一章（%s ≠ %s），不接",
+                          (title2 or "")[:20], (c_title or "")[:20])
                 break
             if len(body2) < 200 or body2.strip() in body:
                 log.debug("分页第 %d 页没带来新正文（%d 字），不再往下接", pages + 1, len(body2))

@@ -430,23 +430,7 @@ class GenericParser(BaseParser):
     def parse_chapter(self, html, title_hint=None):
         soup = BeautifulSoup(html, "lxml")
 
-        h = soup.find(["h1", "h2"])
-        title = h.get_text(strip=True) if h else (
-            soup.title.get_text(strip=True) if soup.title else "未知章节")
-
-        parts = [p.strip() for p in re.split(r"[_|］】]", title) if p.strip()]
-        noise = re.compile(r"最新章节|免费阅读|无弹窗|笔趣阁|小说网|全文阅读| txt |txt下载", re.I)
-        chap_pat = re.compile(r"^(第)?[0-9零一二三四五六七八九十百千]+[.、〕]?")
-        chap_parts = [p for p in parts if not noise.search(p)
-                      and (chap_pat.match(p) or re.match(r"^[序终]章|楔子|后记|番外", p))]
-        page_parts = [p for p in parts if re.match(r"^[（(]\s*\d+\s*/\s*\d+\s*[)）]", p)]
-        if chap_parts:
-            title = "_".join(chap_parts + page_parts[:1])
-        else:
-            clean = [p for p in parts if not noise.search(p)]
-            if clean:
-                title = "_".join(clean + page_parts[:1])
-        title = strip_page_mark(title) or (title_hint or "未知章节")
+        title = chapter_title_from(soup, title_hint or "")
 
         container = self._pick_container(soup)
         if container is None:
