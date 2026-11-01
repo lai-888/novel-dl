@@ -8,6 +8,11 @@ import tempfile
 import uuid
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+# 假站点别把学到的规则写进用户真实缓存
+os.environ.setdefault("NOVEL_DL_CACHE",
+                      os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                                   "learned.json"))
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -318,6 +323,90 @@ def test_wide_forms():
     check("正文段落留着", "风灌进来" in body, body)
 
 
+PAGE_ONE = "".join(
+    f"<p>第一页第{i}句，风从窗缝里钻进来，吹得稿纸响了一下。</p>" for i in range(1, 13))
+PAGE_TWO = "".join(
+    f"<p>第二页第{i}句，她把灯往前挪了挪，影子跟着动了一下。</p>" for i in range(1, 13))
+PAGE_OTHER = "".join(
+    f"<p>另一章第{i}句，屋檐滴水，滴在青石板上。</p>" for i in range(1, 13))
+
+
+class PagingFetcher(fetchers.BaseFetcher):
+    """长章拆成两页；第二章的第二页只有一句「未完」，不该被接上去。"""
+
+    name = "fake-paging"
+    MIN_DELAY = MAX_DELAY = 0
+
+    def fetch(self, url):
+        if url.endswith("toc.html"):
+            return ('<html><head><title>分页测试</title></head><body><dl>'
+                    '<dd><a href="/b/p1.html">第1章 甲</a></dd>'
+                    '<dd><a href="/b/p2.html">第2章 乙</a></dd>'
+                    '</dl></body></html>')
+        if url.endswith("p1.html"):
+            return ('<html><head><title>第1章 甲</title></head><body>'
+                    '<h1>第1章 甲</h1><div id="content">' + PAGE_ONE +
+                    '</div><a href="/b/p1_2.html">下一页</a></body></html>')
+        if url.endswith("p1_2.html"):
+            return ('<html><head><title>第1章 甲(2/2)</title></head><body>'
+                    '<h1>第1章 甲(2/2)</h1><div id="content">' + PAGE_TWO +
+                    '</div></body></html>')
+        if url.endswith("p2.html"):
+            return ('<html><head><title>第2章 乙</title></head><body>'
+                    '<h1>第2章 乙</h1><div id="content">' + PAGE_OTHER +
+                    '</div><a href="/b/p2_2.html">下一页</a></body></html>')
+        if url.endswith("p2_2.html"):
+            return ('<html><head><title>第2章 乙(2/2)</title></head><body>'
+                    '<h1>第2章 乙(2/2)</h1><div id="content">未完</div></body></html>')
+        return '<html><body>没有这一页</body></html>'
+
+
+fetchers.FETCHERS["fake-paging"] = PagingFetcher
+PAGING_BOOK = "http://paging.example/b/toc.html"
+
+
+def test_image_chars_and_paging():
+    """两件事：站点把字换成图片、把一个长章拆成几页。"""
+    print("\n[7] 图片字与分页：缺字的正文不要存，空的页不要接")
+    from novel_dl.guard import image_text_reason
+    from bs4 import BeautifulSoup
+
+    para = ('涎<img class="hz" src="/wzbodyimg/a.png"/>接'
+            '<img class="hz" src="/wzbodyimg/b.png"/>到'
+            '<img class="hz" src="/wzbodyimg/c.png"/>面'
+            '<img class="hz" src="/wzbodyimg/d.png"/>的'
+            '<img class="hz" src="/wzbodyimg/e.png"/>瞬'
+            '<img class="hz" src="/wzbodyimg/f.png"/>间，'
+            '她本能地后仰却退无可退，只能看着他靠近，'
+            '喉间发紧，连呼吸都放轻了，'
+            '像怕惊动什么似的。')
+    why = image_text_reason(BeautifulSoup(f'<div id="c"><p>{para * 3}</p></div>', "lxml").div)
+    check("成片的字图会被认出来", why and "图片" in why, why)
+
+    icons = ('<div id="c"><p>' + "正文内容。" * 100 + '</p>'
+             '<img src="/static/sep.png"/><img src="/static/sep.png"/></div>')
+    check("普通装饰图不误判",
+          image_text_reason(BeautifulSoup(icons, "lxml").div) is None)
+
+    short = '<div><p>短<img class="hz" src="/wzbodyimg/x.png"/>句</p></div>'
+    check("太短的块不判（可能是别的组件）",
+          image_text_reason(BeautifulSoup(short, "lxml").div) is None)
+
+    out = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                       "paging" + uuid.uuid4().hex[:6])
+    os.makedirs(out, exist_ok=True)
+    Engine(PAGING_BOOK, driver="fake-paging", out_dir=out, workers=1,
+           min_delay=0).run()
+    p = Progress(out, PAGING_BOOK)
+    first = p.read_chapter(0) or ""
+    second = p.read_chapter(1) or ""
+    check("第一页在", "第一页第1句" in first, first[:40])
+    check("第二页也接上了", "第二页第1句" in first, first[-40:])
+    check("空的分页页不接（不留个「未完」尾巴）", "未完" not in second, second[-40:])
+    check("两章都算完成", len(p.state["done"]) == 2, p.state["done"])
+    shutil.rmtree(out, ignore_errors=True)
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -325,6 +414,7 @@ def main():
     test_chapter_boilerplate()
     test_query_url_sites()
     test_wide_forms()
+    test_image_chars_and_paging()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

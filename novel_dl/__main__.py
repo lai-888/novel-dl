@@ -1,5 +1,11 @@
 """命令行入口。"""
 import argparse
+
+try:
+    from requests.exceptions import RequestException as _REQ_ERR
+    _NET_ERRORS = (ConnectionError, OSError, _REQ_ERR)
+except Exception:                                   # 没装 requests 也能跑
+    _NET_ERRORS = (ConnectionError, OSError)
 import logging
 import sys
 
@@ -127,6 +133,9 @@ def main(argv=None):
         diag.set_trace(trace)
         try:
             engine.run()
+        except _NET_ERRORS as e:
+            _say_unreachable(e, args, cfg)
+            return 2
         finally:
             diag.set_trace(None)
             kinds = {}
@@ -137,8 +146,40 @@ def main(argv=None):
                 args.trace, "，".join(f"{k}×{v}" for k, v in sorted(kinds.items()))))
         return 0
 
-    engine.run()
+    try:
+        engine.run()
+    except _NET_ERRORS as e:
+        _say_unreachable(e, args, cfg)
+        return 2
     return 0
 
+
+def _say_unreachable(e, args, cfg):
+    """连不上站点时说人话，不甩一屏报错。"""
+    host = ""
+    try:
+        from urllib.parse import urlsplit
+        host = urlsplit(args.url.strip()).netloc
+    except Exception:
+        pass
+    print(f"\n连不上 {host or '这个站点'}。")
+    why = str(e)
+    if "10061" in why or "拒绝" in why or "Refused" in why:
+        print("  它直接拒绝了连接：多半是刚才请求太密，被挡了一会儿。")
+    elif "10054" in why or "Reset" in why:
+        print("  连接被对面掐断了：站点在拦，隔几分钟再来。")
+    else:
+        print(f"  原因：{why[:120]}")
+    print("\n可以试试：")
+    print("  · 等几分钟再跑一次（进度会接着下，不会重下）")
+    if cfg.get("proxy"):
+        print("  · 换代理：--proxy http://127.0.0.1:端口")
+    else:
+        print("  · 走代理：--proxy http://127.0.0.1:端口")
+    print("  · 浏览器能打开但这里打不开：把浏览器 Cookie 贴进来（--cookie）")
+    print("  · 还是不行就换驱动：--driver selenium")
+    print(f"\n详情：novel-dl {args.url.strip()[:60]} --inspect")
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

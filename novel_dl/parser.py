@@ -140,6 +140,11 @@ class SiteRuleParser(BaseParser):
             log.debug("ch_content 未命中，退回通用正文解析")
             return GenericParser().parse_chapter(html, title_hint=title)
 
+        from .guard import ImageTextPage, image_text_reason
+        img_why = image_text_reason(container)
+        if img_why:
+            raise ImageTextPage(img_why)
+
         for t in container.find_all(["script", "style", "ins"]):
             t.decompose()
         self._apply_filter_tag(container, rule.get("filter_tag") or "")
@@ -402,6 +407,11 @@ class GenericParser(BaseParser):
         container = self._pick_container(soup)
         if container is None:
             raise ValueError("正文容器定位失败")
+
+        from .guard import ImageTextPage, image_text_reason
+        img_why = image_text_reason(container)
+        if img_why:
+            raise ImageTextPage(img_why)
 
         for t in container.find_all(["script", "style", "ins"]):
             t.decompose()

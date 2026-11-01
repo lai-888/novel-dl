@@ -30,6 +30,37 @@ class DuplicatePage(Exception):
     """站点把别的章节正文又放了一遍（排版错位），取到的内容不属于本章。"""
 
 
+class ImageTextPage(Exception):
+    """站点把部分字换成了小图片，纯文本里取不到这些字。"""
+
+
+# 字图：正文里内联的小图标，src 或 class 带这些特征
+CHAR_IMG = re.compile(r"wzbodyimg|bodyimg|/zi/|char-?img|word-?img", re.I)
+CHAR_IMG_CLASS = re.compile(r"(^|\s)h[zx](\s|$)", re.I)
+
+
+def image_text_reason(node, floor: int = 4, ratio: int = 60):
+    """正文里被换成图片的字太多了就报出来，别把缺字的正文当成完整的存下去。"""
+    if node is None:
+        return None
+    try:
+        chars = len(node.get_text(strip=True))
+    except Exception:
+        return None
+    if chars < 100:
+        return None
+    hits = 0
+    for img in node.find_all("img"):
+        cls = " ".join(img.get("class") or [])
+        src = img.get("src") or img.get("data-src") or ""
+        if CHAR_IMG_CLASS.search(cls) or CHAR_IMG.search(src):
+            hits += 1
+    if hits < floor or hits < chars // ratio:
+        return None
+    return (f"这一章有 {hits} 个字被站点换成了图片，正文里取不到它们"
+            f"（网页上靠图片显示），已跳过，免得给你一份缺字的正文")
+
+
 PROBE_MAX_BYTES = 1500
 
 CAPTCHA_HINTS = (

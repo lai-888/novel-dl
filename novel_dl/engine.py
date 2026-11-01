@@ -520,10 +520,19 @@ class Engine:
             nxt = self._next_page_link(html, page_url)
             if not nxt or not self._is_next_page(page_url, nxt[0]):
                 break
-            pages += 1
             page_url = nxt[0]
-            html = self._get(page_url)
-            _, body2 = self.parser.parse_chapter(html)
+            try:
+                html = self._get(page_url)
+                _, body2 = self.parser.parse_chapter(html)
+            except Exception as e_page:
+                # 分页的最后一页常是「未完」「请订阅」之类，取不到就算了，
+                # 不能因为这一页把整章判成失败。
+                log.debug("分页第 %d 页取不到正文（%s），到此为止", pages + 1, e_page)
+                break
+            if len(body2) < 200 or body2.strip() in body:
+                log.debug("分页第 %d 页没带来新正文（%d 字），不再往下接", pages + 1, len(body2))
+                break
+            pages += 1
             body += "\n" + body2
 
         text = f"{c_title}\n\n{body}"

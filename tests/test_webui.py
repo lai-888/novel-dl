@@ -15,6 +15,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
+# 假站点别把学到的规则写进用户真实缓存
+os.environ.setdefault("NOVEL_DL_CACHE",
+                      os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                                   "learned.json"))
+
 PASS, FAIL = [], []
 
 
