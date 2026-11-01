@@ -389,14 +389,37 @@ class SeleniumFetcher(BaseFetcher):
         if not self.show:
             opts.add_argument("--headless=new")
         else:
-            opts.add_argument("--start-maximized")
+            # 明确摆到主屏中间，别开在屏幕外或被别的窗口盖住
+            opts.add_argument("--window-position=120,80")
+            opts.add_argument("--window-size=1280,900")
         opts.add_argument("--disable-gpu")
         opts.add_argument("--no-sandbox")
         opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36")
+        # 让浏览器看起来就是普通 Chrome：自动化标记会让人机验证一直转圈、永远不出勾选框
+        opts.add_argument("--disable-blink-features=AutomationControlled")
+        opts.add_experimental_option("excludeSwitches", ["enable-automation"])
+        opts.add_experimental_option("useAutomationExtension", False)
         if self.proxy:
             opts.add_argument(f"--proxy-server={self.proxy}")
-        return webdriver.Chrome(options=opts)
+        if self.show:
+            log.warning("🌐 正在启动 Chrome，第一次可能要等一分钟，看到窗口再操作…")
+        d = webdriver.Chrome(options=opts)
+        try:
+            d.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": "Object.defineProperty(navigator,'webdriver',"
+                           "{get:()=>undefined});"})
+        except Exception as e:
+            log.debug("  藏 automation 标记失败（不影响抓取）：%s", e)
+        if self.show:
+            try:
+                d.switch_to.window(d.current_window_handle)   # 尽量把窗口拎到前面
+                d.set_window_rect(x=120, y=80, width=1280, height=900)
+            except Exception as e:
+                log.debug("  摆窗口失败（不影响抓取）：%s", e)
+            log.warning("✅ 浏览器窗口开好了。如果没看到，看一下任务栏的 Chrome。")
+        return d
 
     def _driver(self):
         """每个线程复用一个浏览器实例，别每章都起一次 Chrome。"""
@@ -457,11 +480,14 @@ class SeleniumFetcher(BaseFetcher):
             self.polite_sleep()
         return html
 
-    def _wait_human(self, driver, limit: float = 180.0) -> str:
+    def _wait_human(self, driver, limit: float = 300.0) -> str:
         """浏览器可见时，等人在窗口里把验证点过去。程序不碰验证。"""
-        log.warning("\n🧑 这个站要人机验证。已经打开浏览器窗口，"
-                    "请在窗口里点一下通过验证（最多等 3 分钟）。")
+        mins = max(1, int(limit // 60))
+        log.warning("\n🧑 这个站要人机验证，浏览器窗口已经打开。")
+        log.warning("   请在窗口里点一下「Verify you are human」之类的勾选框；"
+                    "页面一直转圈就再等几秒，最多等 %d 分钟。", mins)
         t0 = time.time()
+        last_tip = t0
         while time.time() - t0 < limit:
             time.sleep(3)
             try:
@@ -469,9 +495,16 @@ class SeleniumFetcher(BaseFetcher):
             except Exception:
                 break
             if not _looks_challenged(html):
-                log.warning("✅ 验证过了，接着下（%d 秒）。", int(time.time() - t0))
+                log.warning("✅ 验证过了，接着下（等了 %d 秒）。", int(time.time() - t0))
                 return html
-        log.warning("⌛ 没等到验证通过，先按原样继续；不行就再跑一次。")
+            now = time.time()
+            if now - last_tip >= 20:
+                last_tip = now
+                left = int(limit - (now - t0))
+                log.warning("   ⏳ 还在等验证：已等 %d 秒，还剩 %d 秒。"
+                            "窗口别关，出现勾选框就点一下。",
+                            int(now - t0), max(0, left))
+        log.warning("⌛ 等满了还没通过验证。可以重跑一次，或者用 --cookie 贴浏览器的 Cookie。")
         try:
             return driver.page_source
         except Exception:
