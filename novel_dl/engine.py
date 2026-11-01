@@ -3,7 +3,7 @@ import os
 import re
 import time
 
-from . import log
+from . import diag, log
 from .fetchers import get_fetcher
 from .guard import EncryptedContent, captcha_reason, probe_reason
 from .parser import find_toc_url, get_parser
@@ -162,6 +162,8 @@ class Engine:
             self.book_url = alt
             title, toc = self.parser.parse_toc(html, self.book_url)
         toc = self._extend_toc_pages(toc, html)
+        diag.emit("toc", parser=type(self.parser).__name__, title=title,
+                  chapters=len(toc), url=self.book_url[-90:])
 
         old_n = len(self.prog.state.get("toc", []))
         new_idx = self.prog.set_book(self.book_url, title, toc)
@@ -614,6 +616,8 @@ class Engine:
 
     def _record_success(self, i, text, c_title, toc, stats, preview=None):
         self.prog.write_chapter(i, text)
+        diag.emit("ch.ok", no=i + 1, title=c_title, chars=len(text),
+                  preview=bool(preview), total=len(toc))
         self.prog.mark_done(i)
         if preview:
             self.prog.mark_preview(i, preview)
@@ -627,6 +631,7 @@ class Engine:
 
     def _record_failure(self, i, toc, err, dead, stats):
         self.prog.mark_failed(i, str(err))
+        diag.emit("ch.fail", no=i + 1, title=toc[i][0], err=str(err)[:120])
         dead.append((i + 1, toc[i][0], str(err)))
         log.warning("  ☠ [%d] %s —— 跳过（%s），已记录在案",
                     i + 1, toc[i][0], str(err)[:80])
@@ -690,10 +695,16 @@ class Engine:
             except Exception:
                 pass    # 网络抖动之类：留给下面的并发批次去重试
 
+        last_win = [0]
+
         def _win():
             """降速期按阶梯放请求，别把并发全砸回被挡的站点。"""
             br = getattr(self.fetcher, "breaker", None)
-            return window if br is None else br.window(window)
+            n = window if br is None else br.window(window)
+            if n != last_win[0]:
+                last_win[0] = n
+                diag.emit("win", now=n, full=window)
+            return n
 
         def run_batch(indices, quick):
             """跑一批。成功的直接落盘，失败的根据 quick 决定进 retry 还是记死。"""

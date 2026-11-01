@@ -52,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "也可以写成文件路径；也可用环境变量 NOVEL_DL_COOKIE")
     ap.add_argument("--reclean", action="store_true",
                     help="不联网，按当前规则重新清洗已下载的章节并重导出 TXT")
+    ap.add_argument("--inspect", action="store_true",
+                    help="只看状态不下载：打印配置、解析器、目录章数、已有进度")
+    ap.add_argument("--trace", default=None, metavar="FILE",
+                    help="把内核事件（请求/编码/熔断/章节/并发窗口）写成 JSONL 便于事后排查")
     ap.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
     ap.add_argument("-V", "--version", action="version", version=f"novel-dl {__version__}")
     return ap
@@ -86,6 +90,18 @@ def main(argv=None):
         from . import rules
         rules.load_rules(force=True)
 
+    if args.inspect:
+        from . import diag
+        url = args.url.strip()
+        data = diag.collect(url=url)
+        data["站点"] = diag.peek(
+            url, driver=args.driver or cfg["driver"],
+            proxy=args.proxy or cfg.get("proxy"),
+            cookie=_read_cookie(args.cookie or cfg.get("cookie")))
+        data["进度"] = diag.disk_progress(args.out or cfg["output_dir"], url)
+        print(diag.report(data))
+        return 0
+
     engine = Engine(
         args.url.strip(),
         driver=args.driver or cfg["driver"],
@@ -104,6 +120,23 @@ def main(argv=None):
         changed, path = engine.reclean()
         print(f"已重新清洗 {changed} 章，TXT：{path}")
         return 0
+
+    if args.trace:
+        from . import diag
+        trace = diag.Trace(args.trace)
+        diag.set_trace(trace)
+        try:
+            engine.run()
+        finally:
+            diag.set_trace(None)
+            kinds = {}
+            for rec in trace.events():
+                kinds[rec["kind"]] = kinds.get(rec["kind"], 0) + 1
+            trace.close()
+            print("轨迹已写入 {}：{}".format(
+                args.trace, "，".join(f"{k}×{v}" for k, v in sorted(kinds.items()))))
+        return 0
+
     engine.run()
     return 0
 

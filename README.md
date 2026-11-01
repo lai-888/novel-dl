@@ -38,6 +38,8 @@ novel-dl https://example.com/book/123/ -v                 # 调试日志
 | `--cookie TEXT` | 站点要人机验证时，贴浏览器的 Cookie（F12 → 网络 → 请求头）；也可以直接写文件路径 |
 | `--config FILE` | 指定配置文件 |
 | `--reclean` | 不联网，按当前规则重新清洗已下载的章节并重导出 TXT |
+| `--inspect` | 只看不下载：打印配置、解析器、目录章数和已有进度 |
+| `--trace FILE` | 把内核事件写成 JSONL（请求、编码、熔断、章节、并发窗口） |
 | `-v` | 输出调试日志 |
 
 中断、报错、站点更新之后，重跑同一条命令即可，已下载的章节不会重复请求。
@@ -53,6 +55,20 @@ novel-dl "<网址>" --cookie "sid=...; uid=..."
 ```bash
 novel-dl https://example.com/book/123/ --reclean
 ```
+
+下载不对时，先看它到底认成了什么（不下载、不写文件）：
+
+```bash
+novel-dl https://example.com/book/123/ --inspect
+```
+
+输出里有解析器名称、目录章数、第一章和最后一章、已有进度、依赖是否齐全。想看清每一章发生了什么，把它记下来：
+
+```bash
+novel-dl https://example.com/book/123/ --trace run.jsonl
+```
+
+`run.jsonl` 每行一个事件：`req.start`/`req.ok`/`req.fail`（请求与耗时）、`retry`（第几次重试）、`enc`（站点声明的编码和实际用的）、`ch.ok`/`ch.fail`（章节结果）、`breaker.open`/`breaker.rise`（被限流时降速和恢复）、`win`（并发窗口变化）。文件可以直接打开看，也可以贴出来排查。
 
 网页界面：`python webui.py`，浏览器打开 `http://127.0.0.1:8766`。
 
@@ -92,10 +108,11 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 测试
 
-`tests/` 下有 10 个断言套件，共 375 项，不依赖 pytest，不联网：
+`tests/` 下有 11 个断言套件，共 425 项，不依赖 pytest，不联网：
 
 ```bash
 python tests/test_all.py    # 单个套件
+python tests/test_diag.py   # 调试工具（状态快照、轨迹）
 python tests/bench.py       # 性能基准
 ```
 

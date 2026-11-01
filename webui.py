@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from novel_dl import __version__, log as nlog, rules
+from novel_dl import __version__, log as nlog, rules, diag
 from novel_dl import library
 from novel_dl.engine import Engine
 
@@ -21,6 +21,7 @@ OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "books")
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 STATE_LOCK = threading.Lock()
+_LIVE = {"engine": None}          # 正在跑的引擎（诊断用，不进 STATE 免得影响 JSON）
 STATE = {
     "running": False,
     "paused": False,
@@ -142,6 +143,8 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                     STATE["message"] = f"启动失败：{str(e)[:120]}"
                 return
 
+            with STATE_LOCK:
+                _LIVE["engine"] = eng
             prog = eng.prog
             orig_done, orig_fail = prog.mark_done, prog.mark_failed
 
@@ -209,6 +212,7 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
                 STATE["running"] = False
                 STATE["paused"] = False
                 STATE["finished_at"] = time.time()
+                _LIVE["engine"] = None
 
     threading.Thread(target=worker, daemon=True).start()
     return True
@@ -259,6 +263,16 @@ class Handler(BaseHTTPRequestHandler):
                 snap = {k: v for k, v in STATE.items()
                         if not isinstance(v, threading.Event)}
             self._json(200, snap)
+
+        elif route == "/api/diag":
+            with STATE_LOCK:
+                eng = _LIVE.get("engine")
+                url = STATE.get("book_url") or ""
+                out_dir = STATE.get("out_dir") or OUT_DIR
+            try:
+                self._json(200, diag.collect(engine=eng, url=url, out_dir=out_dir))
+            except Exception as e:
+                self._json(500, {"error": str(e)[:160]})
 
         elif route == "/api/rules":
             rs = rules.load_rules()

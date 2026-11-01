@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 import requests
 
-from . import log
+from . import diag, log
 from .encoding import decode_body
 
 FETCHERS = {}
@@ -111,6 +111,8 @@ class Breaker:
             self.slow, self._ok, self._limit = True, 0, 1
             self.cooldowns += 1
             err_text = f"（{str(err)[:60]}）" if err else ""
+            diag.emit("breaker.open", wait=round(wait, 3), round=self._round,
+                      streak=self.STREAK, err=err_text)
         log.warning("⏸ 连续 %d 次失败%s，停 %.1f 秒再试，期间只发一个请求",
                     self.STREAK, err_text, wait)
 
@@ -130,6 +132,7 @@ class Breaker:
                 self._limit = min(self._limit * 2, self.CEIL)
                 recovered = False
             limit = self._limit
+        diag.emit("breaker.rise", limit=limit, slow=self.slow)
         log.info("▶ 连着成功，放开到 %d 个请求%s", limit,
                  "，恢复正常" if recovered else "（慢慢来）")
 
@@ -220,15 +223,25 @@ class BaseFetcher:
     def fetch_compat(self, url: str, quick: bool = False) -> str:
         """按 fetcher 的实际签名选择调用方式（供引擎统一使用）。"""
         fn = self.fetch
-        if not quick:
-            return fn(url)
+        t0 = time.monotonic()
+        diag.emit("req.start", url=url[-90:], quick=quick, driver=self.name)
         try:
-            params = inspect.signature(fn).parameters
-        except (TypeError, ValueError):
-            return fn(url)
-        if "quick" in params:
-            return fn(url, quick=True)
-        return fn(url)
+            if not quick:
+                text = fn(url)
+            else:
+                try:
+                    params = inspect.signature(fn).parameters
+                except (TypeError, ValueError):
+                    text = fn(url)
+                else:
+                    text = fn(url, quick=True) if "quick" in params else fn(url)
+        except Exception as e:
+            diag.emit("req.fail", url=url[-90:], driver=self.name,
+                      ms=round((time.monotonic() - t0) * 1000), err=str(e)[:120])
+            raise
+        diag.emit("req.ok", url=url[-90:], driver=self.name,
+                  ms=round((time.monotonic() - t0) * 1000), chars=len(text or ""))
+        return text
 
 
 @register("requests")
@@ -279,9 +292,12 @@ class RequestsFetcher(BaseFetcher):
                     self.polite_sleep()
                 text, used = decode_body(r.content, r.encoding or "")
                 log.debug("编码 %s -> %s", r.encoding, used)
+                diag.emit("enc", url=url[-90:], bytes=len(r.content), enc=used,
+                          declared=r.encoding or "", status=r.status_code)
                 return text
             except Exception as e:
                 last_err = e
+                diag.emit("retry", url=url[-90:], try_no=attempt, err=str(e)[:120])
                 if "CERTIFICATE_VERIFY_FAILED" in str(e) and host not in self.insecure_hosts:
                     import urllib3
                     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
