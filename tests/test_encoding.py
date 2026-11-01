@@ -19,6 +19,18 @@ def check(name, cond, detail=""):
     print(("  ✅ " if cond else "  ❌ ") + name + ("" if cond else f"  <- {detail}"))
 
 CN = "第一章 少年提着灯走过长街，夜色沉沉。"
+BIG5 = "第一章 少年提著燈走過長街，夜色沉沉。"
+
+
+def _no_cn(enc, raw):
+    """把 charset_normalizer 摘掉，确认还能正常解码。"""
+    old = enc._cn_from_bytes
+    enc._cn_from_bytes = None
+    try:
+        text, used = enc.decode_body(raw, "")
+        return text == CN and used == "utf-8"
+    finally:
+        enc._cn_from_bytes = old
 
 
 def main():
@@ -89,6 +101,26 @@ def main():
     check("空 bytes", decode_body(b"", "")[0] == "")
     check("空字符串 strip", strip_invisible("") == "")
     check("空 clean_text", clean_text("") == "")
+
+    print("\n[12] 声明写错也不被带偏（以前会解出「看着正常」的错字）")
+    utf8_raw = CN.encode("utf-8")
+    text, used = decode_body(utf8_raw, "gb2312")
+    check("UTF-8 字节被声明成 gb2312 也解对", text == CN, f"{used} {text[:20]!r}")
+    check("认出来其实是 utf-8", used == "utf-8", used)
+
+    big5_raw = BIG5.encode("big5")
+    junk = big5_raw.decode("gb18030", errors="ignore")
+    check("Big5 字节按 GBK 硬解确实是坏文本", looks_garbled(junk), junk[:24])
+    text2, used2 = decode_body(big5_raw, "gbk")
+    check("Big5 字节被声明成 gbk 也解对", text2 == BIG5, f"{used2} {text2[:20]!r}")
+    check("落到了 big5 系超集", used2 == "big5hkscs", used2)
+
+    check("零散图标字体不误判成乱码", not looks_garbled("正文练习。" * 200 + "\ue001\ue002"))
+
+    from novel_dl import encoding as enc
+    check("charset_normalizer 缺席时照常工作", _no_cn(enc, utf8_raw))
+    guess = enc.guess_encoding(CN.encode("gbk"))
+    check("charset_normalizer 能认出 gb18030", guess in ("gb18030", "gbk"), guess)
 
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
