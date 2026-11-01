@@ -120,11 +120,13 @@ novel-dl https://example.com/book/123/ --trace run.jsonl
 ## 输出
 
 ```
-books/<slug>/
+books/书名（网址摘要）/
 ├── cache/00001.txt   # 一章一个文件
-├── state.json        # 目录快照、已完成、失败名单
+├── state.json        # 目录快照、已完成、失败名单、付费预览名单
 └── 书名.txt           # 合并成品
 ```
+
+目录用书名命名，后面括号里是网址摘要，同名书不会互相覆盖。目录被别人打开着改不了名时（资源管理器停在那一层、同步盘正在同步），程序会提示一句，下次跑同一条命令再试。
 
 想重下某一章，删掉对应的 `cache/NNNNN.txt` 再跑一次。
 
@@ -150,7 +152,7 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 测试
 
-`tests/` 下有 11 个断言套件，共 474 项，不依赖 pytest，不联网：
+`tests/` 下有 11 个断言套件，共 483 项，不依赖 pytest，不联网：
 
 ```bash
 python tests/test_all.py    # 单个套件

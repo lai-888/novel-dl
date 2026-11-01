@@ -57,6 +57,50 @@ def tmpdir():
     return p
 
 
+def test_dir_named_by_title():
+    """books/ 里的目录要带书名，且改名之后还能认回来。"""
+    print("\n[目录名] 用书名而不是网址")
+    out = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                       "named" + uuid.uuid4().hex[:6])
+    url = "https://named.example/book/9527/catalog/"
+    try:
+        p = Progress(out, url)
+        slug_dir = os.path.basename(p.root)
+        check("还没书名时先用网址目录", "named.example" in slug_dir, slug_dir)
+
+        p.state["title"] = "夜色长街（上）"
+        p.state["book_url"] = url
+        p.save(force=True)          # save() 默认节流，测试里强制落盘
+        ok = p.use_title("夜色长街（上）")
+        name = os.path.basename(p.root)
+        check("给了书名就改成书名目录", ok and name.startswith("夜色长街（上）"), name)
+        check("改名后账本跟着走", os.path.isfile(p.state_path), p.state_path)
+        check("改名后目录里还有缓存子目录", os.path.isdir(p.cache_dir), p.cache_dir)
+
+        p2 = Progress(out, url)
+        check("再开一次能认回书名目录", os.path.basename(p2.root) == name,
+              os.path.basename(p2.root))
+        check("认回之后账本还在", p2.state.get("title") == "夜色长街（上）",
+              p2.state.get("title"))
+
+        check("同名不重复改名", p2.use_title("夜色长街（上）") is False, "又改了一次")
+
+        import novel_dl.progress as pmod
+        real = pmod.os.rename
+        def boom(a, b):
+            raise OSError(5, "Access denied")
+        pmod.os.rename = boom
+        try:
+            p3 = Progress(out, url)
+            moved = p3.use_title("另一个名字")
+            check("目录被占用时不崩，返回 False", moved is False, moved)
+            check("失败后仍在原目录", os.path.isdir(p3.root), p3.root)
+        finally:
+            pmod.os.rename = real
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+
+
 def main():
     out = tmpdir()
     calls = []
@@ -124,6 +168,8 @@ def main():
     finally:
         shutil.rmtree(out, ignore_errors=True)
         Site.chapters = N
+
+    test_dir_named_by_title()
 
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:

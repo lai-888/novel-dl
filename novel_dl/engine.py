@@ -399,6 +399,7 @@ class Engine:
             if new_text != text:
                 p.write_chapter(i, new_text)
                 changed += 1
+        self.prog.use_title(p.state.get("title") or "")
         log.info("🧽 重新清洗：有缓存 %d 章，改动 %d 章", cached, changed)
         return changed, self.export(p.state.get("title") or "未命名", toc)
 
@@ -426,6 +427,8 @@ class Engine:
             return gh
 
         title, toc = self.refresh_toc()
+        p = self.prog
+        p.use_title(title)          # books/ 里直接显示书名
         if resuming:
             last = p.state.get("last_chapter_no")
             if last and last >= len(toc):

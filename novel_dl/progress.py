@@ -7,6 +7,7 @@ import threading
 import time
 
 from . import log
+from .textutil import safe_filename
 
 STATE_VERSION = 2
 
@@ -42,12 +43,19 @@ def legacy_index(name: str):
 
 class Progress:
     def __init__(self, root: str, book_url: str):
-        new_root = os.path.join(root, _slug(book_url))
+        self._parent = root
+        self._slug = _slug(book_url)
+        new_root = os.path.join(root, self._slug)
         legacy = os.path.join(root, _legacy_slug(book_url))
         # 老版本已经下过的书沿用旧目录名，别让用户重新下一遍
         if new_root != legacy and not os.path.exists(new_root) \
                 and os.path.isdir(legacy):
             new_root = legacy
+        # 已经按「书名（网址摘要）」放过的，认回那个目录
+        if not os.path.isdir(new_root):
+            found = self._find_titled_dir()
+            if found:
+                new_root = found
         self.root = new_root
         self.cache_dir = os.path.join(self.root, "cache")
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -57,6 +65,52 @@ class Progress:
         self._pending = 0       # 距上次落盘又过了多少章
         self._lock = threading.RLock()
         self._migrate_cache()
+
+    def _find_titled_dir(self):
+        """找「书名（slug）」形式的目录，重命名之后下次还能认回来。"""
+        try:
+            names = os.listdir(self._parent)
+        except OSError:
+            return None
+        for name in names:
+            if name.endswith(f"（{self._slug}）") or name.endswith(f"({self._slug})"):
+                p = os.path.join(self._parent, name)
+                if os.path.isdir(p):
+                    return p
+        return None
+
+    def use_title(self, title: str) -> bool:
+        """把目录改名为「书名（网址摘要）」，让人在 books/ 里一眼看出是哪本书。
+
+        返回是否改了。Windows 上目录被别的程序打开时改不动，那就下次再说。
+        """
+        name = safe_filename(title or "", 60).strip(" .")
+        if not name or name == "未命名":
+            return False
+        if name in os.path.basename(self.root):
+            return False
+        desired = os.path.join(self._parent, f"{name}（{self._slug}）")
+        if os.path.abspath(desired) == os.path.abspath(self.root):
+            return False
+        if os.path.isdir(desired):
+            # 已经有这个目录了，直接沿用（可能是上一次改名留下的）
+            self._rebind(desired)
+            return True
+        try:
+            os.rename(self.root, desired)
+        except OSError as e:
+            log.warning("books/ 里这本还叫网址名，改成书名失败（%s）；"
+                        "关掉占用该目录的程序（资源管理器、网页界面）后重跑即可",
+                        getattr(e, "strerror", e))
+            return False
+        self._rebind(desired)
+        log.info("📁 目录按书名整理：%s", os.path.basename(desired))
+        return True
+
+    def _rebind(self, new_root: str) -> None:
+        self.root = new_root
+        self.cache_dir = os.path.join(new_root, "cache")
+        self.state_path = os.path.join(new_root, "state.json")
 
     # ---------- 账本读写 ----------
     def _load(self) -> dict:

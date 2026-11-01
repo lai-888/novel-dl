@@ -446,8 +446,9 @@ def main():
 
     print("\n[12] 站点把别的章节重复贴过来")
     out = os.path.join(_tmpdir("dup_"), "books")
-    Engine(DUP_BOOK, driver="fake-dup", out_dir=out, workers=1).run()
-    book_dir = os.path.join(out, "https_dup.example_book_9")
+    eng = Engine(DUP_BOOK, driver="fake-dup", out_dir=out, workers=1)
+    eng.run()
+    book_dir = eng.prog.root        # 目录名是「书名（网址摘要）」，别按网址拼
     st = json.load(open(os.path.join(book_dir, "state.json"), encoding="utf-8"))
     check("重复页那章记为失败", 2 in st["failed"], str(st["failed"]))
     reason = (st.get("fail_log") or {}).get("2", "")
