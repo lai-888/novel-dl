@@ -19,11 +19,29 @@ _PROXY: str | None = None
 _COOKIE: str = ""
 
 
+_UA = ""
+
+
 def set_proxy(url: str | None):
     """设置所有 requests 请求走的代理；传空表示「不显式指定」。"""
     global _PROXY
     u = (url or "").strip()
     _PROXY = u or None
+
+
+DEFAULT_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+
+
+def set_ua(raw: str | None):
+    """站点把人机验证的通行证绑在 UA 上，那就用你浏览器的那一条。"""
+    global _UA
+    _UA = (raw or "").strip()
+
+
+def get_ua() -> str:
+    """命令行 > 环境变量 NOVEL_DL_UA > 默认 Chrome。"""
+    return _UA or os.environ.get("NOVEL_DL_UA", "").strip() or DEFAULT_UA
 
 
 def set_cookie(raw: str | None):
@@ -265,9 +283,7 @@ class RequestsFetcher(BaseFetcher):
         super().__init__()
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/125.0.0.0 Safari/537.36",
+            "User-Agent": get_ua(),
             "Accept-Language": "zh-CN,zh;q=0.9",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
@@ -394,8 +410,7 @@ class SeleniumFetcher(BaseFetcher):
             opts.add_argument("--window-size=1280,900")
         opts.add_argument("--disable-gpu")
         opts.add_argument("--no-sandbox")
-        opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                          "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36")
+        opts.add_argument(f"user-agent={get_ua()}")
         # 让浏览器看起来就是普通 Chrome：自动化标记会让人机验证一直转圈、永远不出勾选框
         opts.add_argument("--disable-blink-features=AutomationControlled")
         opts.add_experimental_option("excludeSwitches", ["enable-automation"])

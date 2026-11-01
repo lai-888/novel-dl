@@ -33,6 +33,7 @@ novel-dl https://example.com/book/123/ -v                 # 调试日志
 | `-o DIR` | 输出目录，默认 `./books` |
 | `-d NAME` | 抓取驱动，`requests` 或 `selenium` |
 | `--show` | 开一个看得见的浏览器（自动用 selenium），人机验证由你在窗口里点 |
+| `--ua TEXT` | 指定 User-Agent，贴 Cookie 时一起给（通行证认 UA） |
 | `--no-auto` | 只做通用解析，不自动推断页面结构 |
 | `--backup URL` | 备用镜像地址 |
 | `--rules FILE` | 追加规则文件 |
@@ -57,7 +58,15 @@ Cloudflare 那种「请稍候…」的站（幻夢ACG、部分书屋）连 Cooki
 novel-dl "<网址>" --show
 ```
 
-`--show` 会自动切到 selenium 驱动，最多等你三分钟；期间窗口不要关。过了这一关，整本书都在这个浏览器里下完，不用再点。
+`--show` 会自动切到 selenium 驱动，最多等你五分钟；期间窗口不要关。过了这一关，整本书都在这个浏览器里下完，不用再点。
+
+有些站（掌阅，以及盾比较硬的站）连可见窗口都过不去 —— 它认得出这是自动化的浏览器，就一直转圈、不给勾选框。这种只能借你自己浏览器里的那份通行证：先在你平时用的浏览器里打开这本书、把验证过掉、能正常看到正文，然后把两样东西交给程序：请求头里的 Cookie，和同一个浏览器的 User-Agent（通行证和 UA 是绑在一起的，UA 不对等于没带）。
+
+```bash
+novel-dl "<网址>" --cookie "cf_clearance=...; uid=..." --ua "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
+```
+
+两样在同一处拿：F12 → 网络 → 刷新页面 → 点第一个请求 → 请求头里的 `Cookie` 和 `User-Agent`，整行复制粘贴即可。
 
 正文里混进广告、站点改版之后，用 `--reclean` 就地重洗，不用重下：
 
@@ -117,7 +126,7 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 测试
 
-`tests/` 下有 11 个断言套件，共 425 项，不依赖 pytest，不联网：
+`tests/` 下有 11 个断言套件，共 443 项，不依赖 pytest，不联网：
 
 ```bash
 python tests/test_all.py    # 单个套件

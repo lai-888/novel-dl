@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-auto", action="store_true",
                     help="关闭自动分析网页结构（默认开启：未收录的站点会在"
                          "通用解析失败时自动推断选择器并缓存）")
+    ap.add_argument("--ua", default=None, metavar="TEXT",
+                    help="浏览器 User-Agent。人机验证的通行证（Cookie）通常和它绑在一起，"
+                         "贴 Cookie 时把浏览器的 UA 一起给上；也可用环境变量 NOVEL_DL_UA")
     ap.add_argument("--show", action="store_true",
                     help="用看得见的浏览器抓（selenium 驱动专用）：碰上 Cloudflare "
                          "那种「请稍候…」的验证页，在窗口里点一下就能继续")
@@ -124,6 +127,7 @@ def main(argv=None):
         args.url.strip(),
         driver=driver,
         show_browser=args.show,
+        ua=args.ua,
         out_dir=args.out or cfg["output_dir"],
         from_ch=args.from_ch,
         to_ch=args.to_ch,

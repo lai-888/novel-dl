@@ -407,6 +407,38 @@ def test_image_chars_and_paging():
     shutil.rmtree(out, ignore_errors=True)
 
 
+def test_user_agent():
+    """验证通行证和 UA 绑在一起，所以 UA 必须能换。"""
+    print("\n[9] User-Agent：验证过的 Cookie 认它")
+    from novel_dl import fetchers
+
+    fetchers.set_ua(None)
+    old = os.environ.pop("NOVEL_DL_UA", None)
+    try:
+        check("没指定时用默认 Chrome",
+              "Chrome/" in fetchers.get_ua(), fetchers.get_ua()[:40])
+        fetchers.set_ua("Mozilla/5.0 (Macintosh) TestUA/1.0")
+        check("命令行指定的优先", fetchers.get_ua().endswith("TestUA/1.0"),
+              fetchers.get_ua())
+        fetchers.set_ua(None)
+        os.environ["NOVEL_DL_UA"] = "EnvUA/2.0"
+        check("环境变量次之", fetchers.get_ua() == "EnvUA/2.0", fetchers.get_ua())
+    finally:
+        fetchers.set_ua(None)
+        os.environ.pop("NOVEL_DL_UA", None)
+        if old:
+            os.environ["NOVEL_DL_UA"] = old
+
+    fetchers.set_ua("SessionUA/3.0")
+    try:
+        f = fetchers.get_fetcher("requests")
+        check("requests 会话真的用它",
+              f.session.headers.get("User-Agent") == "SessionUA/3.0",
+              f.session.headers.get("User-Agent"))
+    finally:
+        fetchers.set_ua(None)
+
+
 def test_challenge_detect():
     """Cloudflare 那种「请稍候…」页面要认得出来，别当成正文去解析。"""
     print("\n[8] 验证页：认得出来，才谈得上等人去点")
@@ -443,6 +475,7 @@ def main():
     test_wide_forms()
     test_image_chars_and_paging()
     test_challenge_detect()
+    test_user_agent()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:
