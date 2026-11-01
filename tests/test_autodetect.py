@@ -117,7 +117,7 @@ def run_site(name, builder, expect_toc_min=10):
         check("推断出规则", False, "detect 返回 None")
         return
     check("推断出规则", True)
-    check("有 toc_item", bool(rule.get("toc_item")), str(rule))
+    check("推断只给正文，目录交给通用解析", not rule.get("toc_item"), str(rule))
 
     p = SiteRuleParser(rule)
     title, toc = p.parse_toc(pages[base], base)

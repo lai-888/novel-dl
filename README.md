@@ -137,9 +137,11 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 站点规则
 
-仓库里不带任何具体网站的选择器。通用解析器跑不通时，写一条 JSON 规则放进
-`sites.json`，格式见 [docs/RULES.md](docs/RULES.md)；也可以先试自动推断
-（默认开启，结果缓存在 `~/.novel-dl/learned.json`，可用 `NOVEL_DL_CACHE` 指定路径）。
+目录、正文默认全靠通用解析：目录按网址形状聚类，正文按页面结构挑块，不认具体网站，也不带任何网站名单。
+
+遇到结构特别怪的站，程序会自动推断一次「正文在哪」，结果缓存在 `~/.novel-dl/learned.json`（可用 `NOVEL_DL_CACHE` 指定路径）；推断只找正文，目录仍然走通用解析。想彻底关掉推断用 `--no-auto`。
+
+推断也不灵的时候，才需要自己写规则放进 `sites.json`，格式见 [docs/RULES.md](docs/RULES.md)。
 
 ## 测试
 

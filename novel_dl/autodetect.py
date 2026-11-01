@@ -471,16 +471,12 @@ def detect(book_url: str, fetcher) -> dict | None:
         log.info("推断：收窄到同一网址形状后只剩 %d 条，放弃", len(trimmed))
         return None
 
+    # 目录一律交给通用解析（按网址形状聚类比选择器可靠），
+    # 推断只负责找到正文在哪，别把 toc_item 写进规则。
     rule = {
         "host": host,
         "name": host,
-        "toc_item": toc_item,
     }
-    if len(groups) > 1 or len(main_group) > len(trimmed):
-        # 选择器会连带命中别的链接，用 toc_filter 收到这一批
-        flt = re.escape(main_tpl).replace("N", "\\d+")
-        rule["toc_filter"] = flt
-        log.debug("推断：目录收窄到 %s（%d 章）", flt, len(trimmed))
     candidates = trimmed
 
     first_url = urljoin(book_url, candidates[0].get("href"))
@@ -508,13 +504,12 @@ def detect(book_url: str, fetcher) -> dict | None:
 
     status = _verify(rule, soup, book_url, ch_soup, SiteRuleParser, idx)
     if status == "ok":
-        log.info("✅ 推断成功：%s → toc=%s content=%s",
-                 host, rule["toc_item"], rule.get("ch_content", "(通用)"))
+        log.info("✅ 推断成功：%s → 正文 %s（目录走通用解析）",
+                 host, rule.get("ch_content", "(通用)"))
         return rule
     if status == "toc_only":
-        rule.pop("ch_content", None)
-        log.info("✅ 推断部分成功：%s → 目录规则可用，正文走通用解析", host)
-        return rule
+        log.info("推断：正文选择器没通过验证，放弃")
+        return None
 
     log.info("推断：生成的规则未通过验证，放弃")
     return None
@@ -532,7 +527,8 @@ def _verify(rule, toc_soup, book_url, ch_soup, parser_cls, index=None) -> str:
     except Exception:
         return "fail"
     if not toc or len(toc) < 3:
-        return "fail"
+        # 目录由通用解析负责；这里的规则只管正文，目录解析不出来也能用
+        pass
 
     try:
         ctitle, body = p.parse_chapter(str(ch_soup))
