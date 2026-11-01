@@ -296,7 +296,8 @@ def disk_progress(out_dir: str, book_url: str = "") -> dict:
         "说明": "输出目录里有这些书", "书数": books, "其中一本": rows[0]}
 
 
-def peek(url: str, driver="requests", proxy=None, cookie=None) -> dict:
+def peek(url: str, driver="requests", proxy=None, cookie=None,
+         show=False) -> dict:
     """只读地看一眼站点：抓目录页、选解析器、数章节，不写任何文件。"""
     from .fetchers import get_fetcher, set_cookie, set_proxy
     from .parser import find_toc_url, get_parser
@@ -307,7 +308,7 @@ def peek(url: str, driver="requests", proxy=None, cookie=None) -> dict:
     if cookie:
         set_cookie(cookie)
     try:
-        fet = get_fetcher(driver)
+        fet = get_fetcher(driver, show=show)
     except Exception as e:
         out["抓取器"] = f"起不来（{e}）"
         return out

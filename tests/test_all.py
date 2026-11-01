@@ -407,6 +407,33 @@ def test_image_chars_and_paging():
     shutil.rmtree(out, ignore_errors=True)
 
 
+def test_challenge_detect():
+    """Cloudflare 那种「请稍候…」页面要认得出来，别当成正文去解析。"""
+    print("\n[8] 验证页：认得出来，才谈得上等人去点")
+    from novel_dl.fetchers import _looks_challenged, get_fetcher
+
+    check("Cloudflare 挑战页认得",
+          _looks_challenged('<html><title>Just a moment...</title>'
+                            '<script>window._cf_chl_opt={}</script></html>'))
+    check("腾讯验证页认得",
+          _looks_challenged('<iframe src="https://captcha.qq.com/TCaptcha.js"></iframe>'))
+    check("正常正文页不误判",
+          not _looks_challenged('<html><body><div id="content">'
+                                + "正文内容。" * 200 + '</div></body></html>'))
+    check("空页面不判", not _looks_challenged(""))
+    check("超大页面不判（不可能是验证页）",
+          not _looks_challenged("<html>" + "正" * 250_000 + "</html>"))
+
+    try:
+        from novel_dl.fetchers import SeleniumFetcher
+        f = SeleniumFetcher(show=True)
+        check("selenium 能记住「要看得见」", f.show is True, str(f.show))
+        f2 = SeleniumFetcher()
+        check("默认还是无头", f2.show is False, str(f2.show))
+    except (ImportError, SystemExit):
+        print("  （没装 selenium，跳过可见浏览器的两项）")
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -415,6 +442,7 @@ def main():
     test_query_url_sites()
     test_wide_forms()
     test_image_chars_and_paging()
+    test_challenge_detect()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

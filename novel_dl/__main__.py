@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-auto", action="store_true",
                     help="关闭自动分析网页结构（默认开启：未收录的站点会在"
                          "通用解析失败时自动推断选择器并缓存）")
+    ap.add_argument("--show", action="store_true",
+                    help="用看得见的浏览器抓（selenium 驱动专用）：碰上 Cloudflare "
+                         "那种「请稍候…」的验证页，在窗口里点一下就能继续")
     ap.add_argument("--backup", default=None, metavar="URL",
                     help="备用网址（镜像站），主站某章失败时自动改用")
     ap.add_argument("--rules", default=None, metavar="FILE",
@@ -103,14 +106,24 @@ def main(argv=None):
         data["站点"] = diag.peek(
             url, driver=args.driver or cfg["driver"],
             proxy=args.proxy or cfg.get("proxy"),
-            cookie=_read_cookie(args.cookie or cfg.get("cookie")))
+            cookie=_read_cookie(args.cookie or cfg.get("cookie")),
+            show=args.show)
         data["进度"] = diag.disk_progress(args.out or cfg["output_dir"], url)
         print(diag.report(data))
         return 0
 
+    driver = args.driver or cfg["driver"]
+    if args.show and driver != "selenium":
+        print("💡 给了 --show，改用 selenium 驱动（可见的浏览器）")
+        driver = "selenium"
+    if args.show and (args.workers or 0) > 1:
+        print("💡 --show 时改成单窗口顺序下，免得多开几个浏览器")
+        args.workers = 1
+
     engine = Engine(
         args.url.strip(),
-        driver=args.driver or cfg["driver"],
+        driver=driver,
+        show_browser=args.show,
         out_dir=args.out or cfg["output_dir"],
         from_ch=args.from_ch,
         to_ch=args.to_ch,

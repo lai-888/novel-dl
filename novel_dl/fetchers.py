@@ -68,7 +68,14 @@ def register(name):
 def get_fetcher(name: str, **kw):
     if name not in FETCHERS:
         raise SystemExit(f"未知的抓取驱动: {name}，可用: {list(FETCHERS)}")
-    return FETCHERS[name](**kw)
+    cls = FETCHERS[name]
+    if kw:
+        # 只把驱动认得的参数递进去，免得一个可选参数把别的驱动带崩
+        import inspect
+        params = inspect.signature(cls.__init__).parameters
+        if not any(p.kind == p.VAR_KEYWORD for p in params.values()):
+            kw = {k: v for k, v in kw.items() if k in params}
+    return cls(**kw)
 
 
 def list_fetchers() -> list[str]:
@@ -340,9 +347,22 @@ class RequestsFetcher(BaseFetcher):
         return base * (0.75 + random.random() * 0.5)
 
 
+CHALLENGE_MARKS = ("cf_chl_opt", "challenge-platform", "cf-challenge",
+                   "Just a moment", "captcha.qq.com", "geetest",
+                   "人机验证", "拖动滑块")
+
+
+def _looks_challenged(html: str) -> bool:
+    """这一页是不是反爬验证页（而不是真正的正文）。"""
+    if not html:
+        return False
+    if len(html) > 200_000:          # 这么大的页面不可能是验证页
+        return False
+    low = html.lower()
+    return any(m.lower() in low for m in CHALLENGE_MARKS)
+
+
 @register("selenium")
-
-
 class SeleniumFetcher(BaseFetcher):
     """插件驱动：处理 JS 动态加载 / 需要等待渲染的网站。"""
 
@@ -350,7 +370,7 @@ class SeleniumFetcher(BaseFetcher):
     WAIT_SELECTOR = None   # 可按站点覆盖：等到某元素出现
     WAIT_SECONDS = 3
 
-    def __init__(self, proxy: str | None = None):
+    def __init__(self, proxy: str | None = None, show: bool = False):
         super().__init__()
         try:
             import selenium  # noqa: F401
@@ -358,6 +378,7 @@ class SeleniumFetcher(BaseFetcher):
             raise SystemExit(
                 'selenium 模式需要先安装：pip install "novel-dl[selenium]"')
         self.proxy = (proxy or get_proxy() or "").strip()
+        self.show = bool(show)          # 看得见的浏览器：人机验证由人来点
         self._local = threading.local()
         atexit.register(self.close)
 
@@ -365,7 +386,10 @@ class SeleniumFetcher(BaseFetcher):
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
         opts = Options()
-        opts.add_argument("--headless=new")
+        if not self.show:
+            opts.add_argument("--headless=new")
+        else:
+            opts.add_argument("--start-maximized")
         opts.add_argument("--disable-gpu")
         opts.add_argument("--no-sandbox")
         opts.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -427,6 +451,28 @@ class SeleniumFetcher(BaseFetcher):
         else:
             time.sleep(self.WAIT_SECONDS)
         html = driver.page_source
+        if self.show and _looks_challenged(html):
+            html = self._wait_human(driver)
         if not quick:
             self.polite_sleep()
         return html
+
+    def _wait_human(self, driver, limit: float = 180.0) -> str:
+        """浏览器可见时，等人在窗口里把验证点过去。程序不碰验证。"""
+        log.warning("\n🧑 这个站要人机验证。已经打开浏览器窗口，"
+                    "请在窗口里点一下通过验证（最多等 3 分钟）。")
+        t0 = time.time()
+        while time.time() - t0 < limit:
+            time.sleep(3)
+            try:
+                html = driver.page_source
+            except Exception:
+                break
+            if not _looks_challenged(html):
+                log.warning("✅ 验证过了，接着下（%d 秒）。", int(time.time() - t0))
+                return html
+        log.warning("⌛ 没等到验证通过，先按原样继续；不行就再跑一次。")
+        try:
+            return driver.page_source
+        except Exception:
+            return ""

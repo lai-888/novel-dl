@@ -32,6 +32,7 @@ novel-dl https://example.com/book/123/ -v                 # 调试日志
 | `--proxy URL` | 走代理抓取（浏览器能打开但程序报连接重置时用） |
 | `-o DIR` | 输出目录，默认 `./books` |
 | `-d NAME` | 抓取驱动，`requests` 或 `selenium` |
+| `--show` | 开一个看得见的浏览器（自动用 selenium），人机验证由你在窗口里点 |
 | `--no-auto` | 只做通用解析，不自动推断页面结构 |
 | `--backup URL` | 备用镜像地址 |
 | `--rules FILE` | 追加规则文件 |
@@ -49,6 +50,14 @@ novel-dl https://example.com/book/123/ -v                 # 调试日志
 ```bash
 novel-dl "<网址>" --cookie "sid=...; uid=..."
 ```
+
+Cloudflare 那种「请稍候…」的站（幻夢ACG、部分书屋）连 Cookie 都拿不到，因为它先让你在页面上点一下。这种情况让程序开一个看得见的浏览器，你在窗口里点过去，它就在同一个浏览器里接着下：
+
+```bash
+novel-dl "<网址>" --show
+```
+
+`--show` 会自动切到 selenium 驱动，最多等你三分钟；期间窗口不要关。过了这一关，整本书都在这个浏览器里下完，不用再点。
 
 正文里混进广告、站点改版之后，用 `--reclean` 就地重洗，不用重下：
 

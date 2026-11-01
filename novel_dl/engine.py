@@ -25,7 +25,8 @@ class Engine:
                  from_ch=None, to_ch=None, min_delay=None,
                  backup_url=None, stop_event=None, pause_event=None,
                  max_toc_pages=200, workers=1, auto_detect=True,
-                 proxy=None, cookie=None, on_toc=None):
+                 proxy=None, cookie=None, on_toc=None,
+                 show_browser=False):
         book_url = (book_url or "").strip()
         if not book_url:
             raise SystemExit("没有提供小说目录页网址")
@@ -41,7 +42,7 @@ class Engine:
         if cookie:
             from .fetchers import set_cookie
             set_cookie(cookie)
-        self.fetcher = get_fetcher(driver)
+        self.fetcher = get_fetcher(driver, show=show_browser)
         if min_delay is not None:
             self.fetcher.MIN_DELAY = min_delay
             self.fetcher.MAX_DELAY = max(min_delay * 3, min_delay)
