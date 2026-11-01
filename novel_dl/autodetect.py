@@ -90,7 +90,114 @@ def _css_path(node) -> str | None:
     return " > ".join(reversed(parts)) if parts else None
 
 
-def _is_unique(soup, sel: str, node) -> bool:
+_SIMPLE_SEL = re.compile(
+    r"^(?P<tag>[A-Za-z][\w-]*)?(?P<ids>(?:#[\w-]+)*)(?P<classes>(?:\.[\w-]+)*)$")
+
+
+class DomIndex:
+    """一次遍历建好 id / class / tag 三张桶，省掉反复全树 select。"""
+
+    def __init__(self, soup):
+        self.soup = soup
+        self.by_id = {}
+        self.by_class = {}
+        self.by_tag = {}
+        for el in soup.find_all(True):
+            nid = el.get("id")
+            if nid:
+                self.by_id.setdefault(nid, []).append(el)
+            for c in (el.get("class") or ()):
+                self.by_class.setdefault(c, []).append(el)
+            self.by_tag.setdefault(el.name, []).append(el)
+
+    def select(self, sel: str):
+        """只处理「简单选择器 + 空格/大于号」组成的链；别的返回 None 交给 soupsieve。"""
+        if not sel or any(ch in sel for ch in ",+~:[]*()"):
+            return None
+        parts = [p.strip() for p in re.split(r"\s*>\s*|\s+", sel.strip()) if p.strip()]
+        if len(parts) < 1 or len(parts) > 8:
+            return None
+        combs = re.findall(r"\s*>\s*|\s+", sel.strip())
+        chain = []
+        for i, part in enumerate(parts):
+            chain.append((part, ">" if i and combs[i - 1].strip() == ">" else " "))
+        cands = self.candidates(chain[-1][0])
+        if cands is None:
+            return None
+        return [el for el in cands if self._match_chain(el, chain)]
+
+    def _match_chain(self, el, chain) -> bool:
+        return self._match_from(el, chain, len(chain) - 1)
+
+    def _match_from(self, el, chain, i) -> bool:
+        """chain[i] 落在 el 上，且左边的每段都能配上；同名嵌套要能回溯。"""
+        if not self._match_compound(el, chain[i][0]):
+            return False
+        if i == 0:
+            return True
+        cur = el.parent
+        if chain[i][1] == ">":
+            return cur is not None and self._match_from(cur, chain, i - 1)
+        while cur is not None and cur.name not in (None, "[document]"):
+            if self._match_from(cur, chain, i - 1):
+                return True
+            cur = cur.parent
+        return False
+
+    @staticmethod
+    def _match_compound(el, compound: str) -> bool:
+        if el is None or el.name in (None, "[document]"):
+            return False
+        m = _SIMPLE_SEL.match(compound)
+        if not m:
+            return False
+        tag = m.group("tag")
+        if tag and el.name != tag:
+            return False
+        ids = [p for p in m.group("ids").split("#") if p]
+        if ids and el.get("id") != ids[0]:
+            return False
+        have = set(el.get("class") or ())
+        for c in [p for p in m.group("classes").split(".") if p]:
+            if c not in have:
+                return False
+        return True
+
+    def candidates(self, sel: str):
+        """能查桶就返回候选列表（可能为空），否则返回 None 表示「查不了」。"""
+        sel = (sel or "").strip()
+        if not sel or any(ch in sel for ch in " >+~,:[]*("):
+            return None
+        m = _SIMPLE_SEL.match(sel)
+        if not m:
+            return None
+        tag = m.group("tag")
+        ids = [p for p in m.group("ids").split("#") if p]
+        classes = [p for p in m.group("classes").split(".") if p]
+        if len(ids) > 1:
+            return None
+        pool = None
+        if ids:
+            pool = self.by_id.get(ids[0], [])
+        for c in classes:
+            bucket = self.by_class.get(c, [])
+            if pool is None:
+                pool = bucket
+            else:
+                keep = {id(el) for el in bucket}
+                pool = [el for el in pool if id(el) in keep]
+        if pool is None:
+            pool = self.by_tag.get(tag, [])
+        elif tag:
+            pool = [el for el in pool if el.name == tag]
+        return pool
+
+
+def _is_unique(soup, sel: str, node, index=None) -> bool:
+    if index is not None:
+        found = index.candidates(sel)
+        if found is not None:
+            return len(found) == 1 and found[0] is node
     try:
         found = soup.select(sel)
     except Exception:
@@ -98,13 +205,13 @@ def _is_unique(soup, sel: str, node) -> bool:
     return len(found) == 1 and found[0] is node
 
 
-def _selector_for(soup, node, suffix: str = "") -> str:
+def _selector_for(soup, node, suffix: str = "", index=None) -> str:
     """拿一条「确实能唯一选中」的选择器。"""
     base = _css_path(node)
     if not base:
         return ""
 
-    if _is_unique(soup, base, node):
+    if _is_unique(soup, base, node, index):
         return base + suffix
 
     chains, cur = [], node
@@ -114,11 +221,11 @@ def _selector_for(soup, node, suffix: str = "") -> str:
         if not cand:
             cur = cur.parent
             continue
-        if _is_unique(soup, cand, cur):
+        if _is_unique(soup, cand, cur, index):
             rel = _relative_path(cur, node)
             if rel:
                 full = f"{cand} {rel}"
-                if _is_unique(soup, full, node):
+                if _is_unique(soup, full, node, index):
                     return full + suffix
             return cand + suffix
         cur = cur.parent
@@ -323,21 +430,27 @@ def detect(book_url: str, fetcher) -> dict | None:
         return None
 
     soup = BeautifulSoup(toc_html, "lxml")
+    idx = DomIndex(soup)
     toc_node = pick_toc_container(soup, book_url)
     if toc_node is None:
         log.info("推断：目录页找不到成组的章节链接")
         return None
 
-    toc_container_sel = _selector_for(soup, toc_node)
+    toc_container_sel = _selector_for(soup, toc_node, index=idx)
     if not toc_container_sel:
         return None
     toc_item = f"{toc_container_sel} a"
 
-    try:
-        candidates = [a for a in soup.select(toc_item)
+    # 容器已经唯一命中，直接取它里面的链接，省一次全树 select
+    if _is_unique(soup, toc_container_sel, toc_node, idx):
+        candidates = [a for a in toc_node.find_all("a", href=True)
                       if _looks_like_chapter(a, book_url)]
-    except Exception:
-        candidates = []
+    else:
+        try:
+            candidates = [a for a in soup.select(toc_item)
+                          if _looks_like_chapter(a, book_url)]
+        except Exception:
+            candidates = []
     if len(candidates) < 3:
         log.info("推断：目录选择器只命中 %d 条，放弃", len(candidates))
         return None
@@ -356,21 +469,22 @@ def detect(book_url: str, fetcher) -> dict | None:
         return None
 
     ch_soup = BeautifulSoup(ch_html, "lxml")
+    ch_idx = DomIndex(ch_soup)
     content = pick_content(ch_soup)
     if content is not None:
-        sel = _selector_for(ch_soup, content)
+        sel = _selector_for(ch_soup, content, index=ch_idx)
         if sel:
             rule["ch_content"] = sel
 
     title = pick_title(ch_soup)
     if title is not None:
-        sel = _selector_for(ch_soup, title)
+        sel = _selector_for(ch_soup, title, index=ch_idx)
         if sel:
             rule["ch_title"] = sel
 
     rule["filter_tag"] = "script, style, ins, iframe"
 
-    status = _verify(rule, toc_html, book_url, ch_html, SiteRuleParser)
+    status = _verify(rule, soup, book_url, ch_soup, SiteRuleParser, idx)
     if status == "ok":
         log.info("✅ 推断成功：%s → toc=%s content=%s",
                  host, rule["toc_item"], rule.get("ch_content", "(通用)"))
@@ -384,22 +498,22 @@ def detect(book_url: str, fetcher) -> dict | None:
     return None
 
 
-def _verify(rule, toc_html, book_url, ch_html, parser_cls) -> str:
-    """用规则实际解析一次。"""
+def _verify(rule, toc_soup, book_url, ch_soup, parser_cls, index=None) -> str:
+    """用规则实际解析一次（页面已经解析好，直接复用）。"""
     try:
         p = parser_cls(rule)
     except Exception:
         return "fail"
 
     try:
-        title, toc = p.parse_toc(toc_html, book_url)
+        title, toc = p.toc_from_soup(toc_soup, book_url, index=index)
     except Exception:
         return "fail"
     if not toc or len(toc) < 3:
         return "fail"
 
     try:
-        ctitle, body = p.parse_chapter(ch_html)
+        ctitle, body = p.parse_chapter(str(ch_soup))
     except Exception:
         return "toc_only"
 

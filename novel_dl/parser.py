@@ -63,14 +63,20 @@ class SiteRuleParser(BaseParser):
 
     # ---------- 目录 ----------
     def parse_toc(self, html, base_url):
-        soup = BeautifulSoup(html, "lxml")
+        return self.toc_from_soup(BeautifulSoup(html, "lxml"), base_url)
+
+    def toc_from_soup(self, soup, base_url, index=None):
+        """已经解析过的页面直接复用，不再重新解析。"""
         title = _doc_title(soup, GenericParser.TITLE_NOISE_PAT)
 
         selector = plain_selector(self.rule.get("toc_item", ""))
         links = []
         if selector:
             try:
-                for a in soup.select(selector):
+                rows = index.select(selector) if index is not None else None
+                if rows is None:
+                    rows = soup.select(selector)
+                for a in rows:
                     if a.has_attr("href") and a.get_text(strip=True):
                         links.append((GenericParser.clean_toc_title(a.get_text(strip=True)),
                                       urljoin(base_url, a["href"])))
@@ -80,7 +86,7 @@ class SiteRuleParser(BaseParser):
 
         if not links:
             log.debug("规则 toc_item 未命中，退回通用解析")
-            title2, toc2 = GenericParser().parse_toc(html, base_url)
+            title2, toc2 = GenericParser().toc_from_soup(soup, base_url, index=index)
             return title or title2, toc2
 
         seen, toc = set(), []
@@ -263,7 +269,10 @@ class GenericParser(BaseParser):
         return (out, prefix) if len(out) >= 3 else ([], "")
 
     def parse_toc(self, html, base_url):
-        soup = BeautifulSoup(html, "lxml")
+        return self.toc_from_soup(BeautifulSoup(html, "lxml"), base_url)
+
+    def toc_from_soup(self, soup, base_url, index=None):
+        """已经解析过的页面直接复用。"""
         title = _doc_title(soup, self.TITLE_NOISE_PAT) or "未知书名"
 
         links = []

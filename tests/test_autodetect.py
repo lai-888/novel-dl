@@ -130,6 +130,43 @@ def run_site(name, builder, expect_toc_min=10):
     check("标题解析出来", bool(ctitle) and len(ctitle) < 80, ctitle)
 
 
+def test_dom_index():
+    print("\n[8] DOM 索引：查桶必须和 soupsieve 给一样的结果")
+    page = ('<html><body><div id="wrap"><div class="hd"><a href="/">首页</a></div>'
+            '<div class="main"><div class="main"><dl>'
+            + "".join(f'<dd class="c"><a href="/b/{i}.html">第{i}章 甲{i}</a></dd>'
+                      for i in range(1, 6))
+            + '</dl></div></div><div class="side"><a href="/x.html">热门</a></div>'
+              '</div><p class="note">说明</p></body></html>')
+    soup = BeautifulSoup(page, "lxml")
+    idx = autodetect.DomIndex(soup)
+
+    same = True
+    for sel in ["a", "dd", "#wrap", ".main", "div.main", "dd.c a",
+                "#wrap > div.main a", "div.main dl a", "#wrap .side a"]:
+        fast = idx.select(sel)
+        slow = soup.select(sel)
+        if fast is None or [id(x) for x in fast] != [id(x) for x in slow]:
+            same = False
+            check(f"索引结果与 soupsieve 一致（{sel}）", False,
+                  f"快 {0 if fast is None else len(fast)} / 慢 {len(slow)}")
+    check("索引结果与 soupsieve 一致", same)
+
+    check("带伪类的选择器交回 soupsieve", idx.select("dd:first-child") is None)
+    check("组合逗号的选择器交回 soupsieve", idx.select("a, dd") is None)
+    check("ID 桶只收真正那个节点",
+          [x.get("id") for x in idx.candidates("#wrap")] == ["wrap"])
+
+    node = soup.select_one(".note")
+    check("_is_unique 用索引后仍要求同一对象",
+          autodetect._is_unique(soup, ".note", node, idx) is True)
+    other = soup.select_one(".hd")
+    check("_is_unique 认得出首节点不是它",
+          autodetect._is_unique(soup, "a", other, idx) is False)
+    check("同名 class 有两个时不认唯一",
+          autodetect._is_unique(soup, ".main", node, idx) is False)
+
+
 def main():
     print("=" * 50)
     print("自动推断：四种截然不同的站点结构")
@@ -184,6 +221,8 @@ def main():
         check("开启自动推断时交给惰性推断（首屏不猜）", not calls, str(calls))
     finally:
         autodetect.detect = orig_detect
+
+    test_dom_index()
 
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
