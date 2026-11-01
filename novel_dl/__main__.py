@@ -46,6 +46,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ua", default=None, metavar="TEXT",
                     help="浏览器 User-Agent。人机验证的通行证（Cookie）通常和它绑在一起，"
                          "贴 Cookie 时把浏览器的 UA 一起给上；也可用环境变量 NOVEL_DL_UA")
+    ap.add_argument("--attach", default=None, metavar="HOST:PORT",
+                    help="接管你自己开着的 Chrome（先用 --remote-debugging-port=9222 启动它），"
+                         "例如 --attach 127.0.0.1:9222。这样浏览器没有自动化标记，"
+                         "Cloudflare 那种盾才放行")
     ap.add_argument("--show", action="store_true",
                     help="用看得见的浏览器抓（selenium 驱动专用）：碰上 Cloudflare "
                          "那种「请稍候…」的验证页，在窗口里点一下就能继续")
@@ -102,6 +106,22 @@ def main(argv=None):
         from . import rules
         rules.load_rules(force=True)
 
+    # 驱动归一化放在最前面：--inspect 也要走同一个浏览器
+    if args.attach:
+        if args.driver and args.driver != "selenium":
+            print("💡 给了 --attach，改用 selenium 驱动去接管浏览器")
+        args.driver = "selenium"
+        if (args.workers or 0) > 1:
+            print("💡 接管浏览器时改成单窗口顺序下")
+            args.workers = 1
+    elif args.show:
+        if (args.driver or cfg["driver"]) != "selenium":
+            print("💡 给了 --show，改用 selenium 驱动（可见的浏览器）")
+        args.driver = "selenium"
+        if (args.workers or 0) > 1:
+            print("💡 --show 时改成单窗口顺序下，免得多开几个浏览器")
+            args.workers = 1
+
     if args.inspect:
         from . import diag
         url = args.url.strip()
@@ -110,24 +130,18 @@ def main(argv=None):
             url, driver=args.driver or cfg["driver"],
             proxy=args.proxy or cfg.get("proxy"),
             cookie=_read_cookie(args.cookie or cfg.get("cookie")),
-            show=args.show)
+            show=args.show, attach=args.attach)
         data["进度"] = diag.disk_progress(args.out or cfg["output_dir"], url)
         print(diag.report(data))
         return 0
 
-    driver = args.driver or cfg["driver"]
-    if args.show and driver != "selenium":
-        print("💡 给了 --show，改用 selenium 驱动（可见的浏览器）")
-        driver = "selenium"
-    if args.show and (args.workers or 0) > 1:
-        print("💡 --show 时改成单窗口顺序下，免得多开几个浏览器")
-        args.workers = 1
 
     engine = Engine(
         args.url.strip(),
-        driver=driver,
+        driver=args.driver or cfg["driver"],
         show_browser=args.show,
         ua=args.ua,
+        attach=args.attach,
         out_dir=args.out or cfg["output_dir"],
         from_ch=args.from_ch,
         to_ch=args.to_ch,

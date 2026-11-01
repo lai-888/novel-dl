@@ -466,6 +466,38 @@ def test_challenge_detect():
         print("  （没装 selenium，跳过可见浏览器的两项）")
 
 
+def test_toc_filter_and_title():
+    """目录被导航污染、h1 是站内通知：这两样都得兜住。"""
+    print("\n[10] 目录收窄与章节标题")
+    from bs4 import BeautifulSoup
+    from novel_dl.parser import chapter_title_from
+
+    page = ('<html><head><title>某书_第十二卷 第三章 雨中的街道 在线无广告版阅读-某站</title>'
+            '</head><body><h1>书籍下架通知</h1><div id="content">'
+            + "正文内容。" * 60 + '</div></body></html>')
+    soup = BeautifulSoup(page, "lxml")
+    t = chapter_title_from(soup)
+    check("章节名从 <title> 里取，不拿站内通知当标题",
+          t.startswith("第十二卷") and "下架" not in t, t)
+
+    noisy = ('<html><head><title>某书</title></head><body>'
+             '<a href="/">首页</a><a href="/cat/1">分类大全</a>'
+             + "".join(f'<a href="/read/9{i}.html">第{i}章</a>' for i in range(1, 9))
+             + '</body></html>')
+    from novel_dl.parser import SiteRuleParser
+    rule = {"host": "x.example", "name": "x",
+            "toc_item": "body a", "toc_filter": r"/read/\d+\.html$"}
+    title, toc = SiteRuleParser(rule).parse_toc(noisy, "http://x.example/book/")
+    check("toc_filter 把导航挡在外面", len(toc) == 8, len(toc))
+    check("导航标题没混进目录",
+          all("首页" not in x[0] and "分类" not in x[0] for x in toc),
+          [x[0] for x in toc][:3])
+
+    no_rule = SiteRuleParser({"host": "x.example", "name": "x"})
+    _t2, toc2 = no_rule.parse_toc(noisy, "http://x.example/book/")
+    check("没给目录选择器时走通用推断", len(toc2) >= 8, len(toc2))
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -476,6 +508,7 @@ def main():
     test_image_chars_and_paging()
     test_challenge_detect()
     test_user_agent()
+    test_toc_filter_and_title()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

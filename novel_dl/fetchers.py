@@ -386,7 +386,8 @@ class SeleniumFetcher(BaseFetcher):
     WAIT_SELECTOR = None   # 可按站点覆盖：等到某元素出现
     WAIT_SECONDS = 3
 
-    def __init__(self, proxy: str | None = None, show: bool = False):
+    def __init__(self, proxy: str | None = None, show: bool = False,
+                 attach: str | None = None):
         super().__init__()
         try:
             import selenium  # noqa: F401
@@ -395,6 +396,8 @@ class SeleniumFetcher(BaseFetcher):
                 'selenium 模式需要先安装：pip install "novel-dl[selenium]"')
         self.proxy = (proxy or get_proxy() or "").strip()
         self.show = bool(show)          # 看得见的浏览器：人机验证由人来点
+        # 接管你自己开着的 Chrome（它没有自动化标记，站点不会认出来）
+        self.attach = (attach or "").strip()
         self._local = threading.local()
         atexit.register(self.close)
 
@@ -402,6 +405,12 @@ class SeleniumFetcher(BaseFetcher):
         from selenium import webdriver
         from selenium.webdriver.chrome.options import Options
         opts = Options()
+        if self.attach:
+            # 接管一个已经开着的 Chrome：不设 UA、不加 headless、不碰它的指纹
+            opts.add_experimental_option("debuggerAddress", self.attach)
+            if self.proxy:
+                log.warning("  接管已有 Chrome 时不改它的代理设置")
+            return webdriver.Chrome(options=opts)
         if not self.show:
             opts.add_argument("--headless=new")
         else:
@@ -447,6 +456,9 @@ class SeleniumFetcher(BaseFetcher):
     def close(self):
         d = getattr(self._local, "driver", None)
         if d is not None:
+            if self.attach:                 # 别人的浏览器，只断开不关它
+                self._local.driver = None
+                return
             try:
                 d.quit()
             except Exception:
@@ -489,7 +501,7 @@ class SeleniumFetcher(BaseFetcher):
         else:
             time.sleep(self.WAIT_SECONDS)
         html = driver.page_source
-        if self.show and _looks_challenged(html):
+        if (self.show or self.attach) and _looks_challenged(html):
             html = self._wait_human(driver)
         if not quick:
             self.polite_sleep()

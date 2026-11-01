@@ -54,6 +54,37 @@ def _doc_title(soup, noise_pat) -> str:
     return strip_invisible(noise_pat.split(raw)[0].strip())
 
 
+CHAPTER_NOISE = re.compile(r"最新章节|免费阅读|无弹窗|笔趣阁|小说网|全文阅读|"
+                          r"在线无广告|txt下载| txt ", re.I)
+CHAPTER_START = re.compile(r"^(第)?[0-9零一二三四五六七八九十百千]+[.、〕]?")
+PAGE_MARK = re.compile(r"^[（(]\s*\d+\s*/\s*\d+\s*[)）]")
+
+
+def chapter_title_from(soup, title_hint: str = "") -> str:
+    """从 <title> 里挑出章节名。h1 常常是站内通知，不能直接用。"""
+    raw = soup.title.get_text(strip=True) if soup.title else ""
+    best = ""
+    if raw:
+        # 先把站点的营销尾巴切掉（「在线无广告」「最新章节」之类），再拆书名/章节
+        head = CHAPTER_NOISE.split(raw)[0] or raw
+        parts = [p.strip() for p in re.split(r"[_|］】]", head) if p.strip()]
+        chap = [p for p in parts if not CHAPTER_NOISE.search(p)
+                and CHAPTER_START.match(p)]
+        page = [p for p in parts if PAGE_MARK.match(p)]
+        if chap:
+            best = "_".join(chap + page[:1])
+        else:
+            clean = [p for p in parts if not CHAPTER_NOISE.search(p)]
+            if clean:
+                best = "_".join(clean + page[:1])
+    if not best:
+        h = soup.find(["h1", "h2"])
+        txt = h.get_text(strip=True) if h else ""
+        if txt and len(txt) <= 60:
+            best = txt
+    return strip_page_mark(best) or (title_hint or "")
+
+
 class SiteRuleParser(BaseParser):
     """按 JSON 规则解析。规则失效时自动退回通用解析器，保证「还能下」。"""
 
@@ -88,6 +119,20 @@ class SiteRuleParser(BaseParser):
             log.debug("规则 toc_item 未命中，退回通用解析")
             title2, toc2 = GenericParser().toc_from_soup(soup, base_url, index=index)
             return title or title2, toc2
+
+        flt = (self.rule.get("toc_filter") or "").strip()
+        if flt:
+            try:
+                pat = re.compile(flt)
+                links = [(t, u) for t, u in links if pat.search(u)]
+            except re.error as e:
+                log.warning("toc_filter 无效（%s）：%s", flt, e)
+
+        nav = GenericParser.NAV_TEXTS
+        if len(links) > 5:
+            kept = [(t, u) for t, u in links if t.strip() not in nav]
+            if len(kept) >= max(3, len(links) // 3):
+                links = kept
 
         seen, toc = set(), []
         for t, u in links:
@@ -129,8 +174,7 @@ class SiteRuleParser(BaseParser):
         if node:
             title = strip_page_mark(node.get_text(strip=True))
         else:
-            h = soup.find(["h1", "h2"])
-            title = strip_page_mark(h.get_text(strip=True)) if h else (
+            title = chapter_title_from(soup) or (
                 soup.title.get_text(strip=True) if soup.title else "未知章节")
 
         c_sel = plain_selector(rule.get("ch_content", ""))

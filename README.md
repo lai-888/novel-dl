@@ -33,6 +33,7 @@ novel-dl https://example.com/book/123/ -v                 # 调试日志
 | `-o DIR` | 输出目录，默认 `./books` |
 | `-d NAME` | 抓取驱动，`requests` 或 `selenium` |
 | `--show` | 开一个看得见的浏览器（自动用 selenium），人机验证由你在窗口里点 |
+| `--attach HOST:PORT` | 接管你自己开着的 Chrome（`--remote-debugging-port=9222`），盾硬的站靠这个 |
 | `--ua TEXT` | 指定 User-Agent，贴 Cookie 时一起给（通行证认 UA） |
 | `--no-auto` | 只做通用解析，不自动推断页面结构 |
 | `--backup URL` | 备用镜像地址 |
@@ -59,6 +60,20 @@ novel-dl "<网址>" --show
 ```
 
 `--show` 会自动切到 selenium 驱动，最多等你五分钟；期间窗口不要关。过了这一关，整本书都在这个浏览器里下完，不用再点。
+
+如果 `--show` 开出来的窗口一直转圈、根本不给勾选框，说明站点认出了这是自动化浏览器。这时候别让程序去开浏览器，改成接管你自己开的那个 —— 用你自己的配置启动 Chrome，它带着你平时的 Cookie 和历史，站点会当普通浏览器放行：
+
+```bash
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data"
+```
+
+窗口起来后（先关掉其它 Chrome 窗口，同一个配置只能有一个实例），另开一个终端：
+
+```bash
+novel-dl "<网址>" --attach 127.0.0.1:9222
+```
+
+程序会接管这个窗口自己翻页下载，你可以看着它跑。你要关窗口它才会停。
 
 有些站（掌阅，以及盾比较硬的站）连可见窗口都过不去 —— 它认得出这是自动化的浏览器，就一直转圈、不给勾选框。这种只能借你自己浏览器里的那份通行证：先在你平时用的浏览器里打开这本书、把验证过掉、能正常看到正文，然后把两样东西交给程序：请求头里的 Cookie，和同一个浏览器的 User-Agent（通行证和 UA 是绑在一起的，UA 不对等于没带）。
 
@@ -126,7 +141,7 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 测试
 
-`tests/` 下有 11 个断言套件，共 443 项，不依赖 pytest，不联网：
+`tests/` 下有 11 个断言套件，共 447 项，不依赖 pytest，不联网：
 
 ```bash
 python tests/test_all.py    # 单个套件

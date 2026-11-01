@@ -455,11 +455,33 @@ def detect(book_url: str, fetcher) -> dict | None:
         log.info("推断：目录选择器只命中 %d 条，放弃", len(candidates))
         return None
 
+    # 只留「同一个网址形状」的那一批：导航、分类、别的书都不算章节
+    from .parser import GenericParser as _GP
+
+    def _tpl(u: str) -> str:
+        return re.sub(r"\d+", "N", u.split("?")[0].split("#")[0])
+
+    groups = {}
+    for a in candidates:
+        groups.setdefault(_tpl(urljoin(book_url, a.get("href"))), []).append(a)
+    main_tpl, main_group = max(groups.items(), key=lambda kv: len(kv[1]))
+    trimmed = [a for a in main_group
+               if a.get_text(strip=True) not in _GP.NAV_TEXTS]
+    if len(trimmed) < 3:
+        log.info("推断：收窄到同一网址形状后只剩 %d 条，放弃", len(trimmed))
+        return None
+
     rule = {
         "host": host,
         "name": host,
         "toc_item": toc_item,
     }
+    if len(groups) > 1 or len(main_group) > len(trimmed):
+        # 选择器会连带命中别的链接，用 toc_filter 收到这一批
+        flt = re.escape(main_tpl).replace("N", "\\d+")
+        rule["toc_filter"] = flt
+        log.debug("推断：目录收窄到 %s（%d 章）", flt, len(trimmed))
+    candidates = trimmed
 
     first_url = urljoin(book_url, candidates[0].get("href"))
     try:

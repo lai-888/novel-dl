@@ -20,13 +20,26 @@ CHAPTER_LIKE = re.compile(
     r"^(https?://[^/]+/(?:book|books|novel|xiaoshuo)/\d+)/\d+\.html?$")
 
 
+CHAPTER_MARK = re.compile(
+    r"第[0-9零一二三四五六七八九十百千万两]+[章节回话卷幕]|序章|终章|序言|尾声|"
+    r"后记|前言|插图|番外|短篇|间章|外传|完结|公告")
+
+
+def _looks_like_chapter_title(title: str) -> bool:
+    """标题里有没有「这是第几章」的意思。没有的话多半取到的是书名。"""
+    t = (title or "").strip()
+    if not t or len(t) < 3:
+        return False
+    return bool(CHAPTER_MARK.search(t))
+
+
 class Engine:
     def __init__(self, book_url: str, driver="requests", out_dir="books",
                  from_ch=None, to_ch=None, min_delay=None,
                  backup_url=None, stop_event=None, pause_event=None,
                  max_toc_pages=200, workers=1, auto_detect=True,
                  proxy=None, cookie=None, on_toc=None,
-                 show_browser=False, ua=None):
+                 show_browser=False, ua=None, attach=None):
         book_url = (book_url or "").strip()
         if not book_url:
             raise SystemExit("没有提供小说目录页网址")
@@ -45,7 +58,7 @@ class Engine:
         if ua:
             from .fetchers import set_ua
             set_ua(ua)
-        self.fetcher = get_fetcher(driver, show=show_browser)
+        self.fetcher = get_fetcher(driver, show=show_browser, attach=attach)
         if min_delay is not None:
             self.fetcher.MIN_DELAY = min_delay
             self.fetcher.MAX_DELAY = max(min_delay * 3, min_delay)
@@ -518,6 +531,10 @@ class Engine:
             html = self._get(url)
             first_html = html
             c_title, body = self.parser.parse_chapter(html)
+
+        # 页面标题不一定是章节名（有的站直接放书名），目录里的更可信
+        if not _looks_like_chapter_title(c_title):
+            c_title = chap_title or c_title
 
         page_url, pages = url, 1
         while pages < 30:
