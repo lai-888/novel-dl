@@ -292,12 +292,39 @@ def test_query_url_sites():
         shutil.rmtree(os.path.dirname(out), ignore_errors=True)
 
 
+def test_wide_forms():
+    """站点把页码、导航写成全角，判定要认得，输出要原样。"""
+    print("\n[6] 全角写法：认得出，但不改原文")
+    from novel_dl.textutil import body_from, is_noise, strip_page_mark
+
+    check("全角页码被当成页码标记",
+          strip_page_mark("第3章 夜色（１／３）") == "第3章 夜色",
+          strip_page_mark("第3章 夜色（１／３）"))
+    check("半角页码照旧",
+          strip_page_mark("第3章 夜色(1/3)") == "第3章 夜色",
+          strip_page_mark("第3章 夜色(1/3)"))
+    weird = "第1章 ㈱与㌔"
+    check("回复字符原样保留（不写进 TXT 的改动一律不做）",
+          strip_page_mark(weird) == weird, strip_page_mark(weird))
+
+    check("全角括号里的导航算噪声", is_noise("（本章完）"))
+    check("全角页码行算噪声", is_noise("（２／７）"))
+    check("正常句子不算噪声", not is_noise("她推开窗，风灌进来。"))
+
+    body = body_from(["第9章 甲（１／２）", "（本章完）", "风灌进来，吹动稿纸。",
+                      "（１／３）"], drop_title="第9章 甲")
+    check("全角重复标题被删", "甲" not in body, body)
+    check("全角噪声行被删", "本章完" not in body and "１／３" not in body, body)
+    check("正文段落留着", "风灌进来" in body, body)
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
     test_url_fixes()
     test_chapter_boilerplate()
     test_query_url_sites()
+    test_wide_forms()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:
