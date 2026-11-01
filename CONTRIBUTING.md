@@ -11,9 +11,9 @@ python tests/test_all.py
 
 ## 提交前
 
-- `python tests/test_all.py` 必须全绿（离线，不联网）。
+- 逐个跑 `tests/` 下的套件（`python tests/test_all.py`、`python tests/test_guard.py` ……），全部为绿，离线，不联网。
 - 不要提交 `books/`、`logs/`、`sites.json`（个人规则）——`.gitignore` 已经挡了。
-- 新功能请带上对应的断言，测试文件是 `tests/test_all.py`，不依赖 pytest。
+- 新功能带断言，放进最贴近的套件；不用 pytest。
 
 ## 可以贡献什么
 
