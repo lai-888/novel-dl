@@ -620,6 +620,46 @@ def test_boilerplate():
           sorted(find_boilerplate(wm)))
 
 
+def test_equal_length_containers():
+    """两个容器字数一样时，按字数挑要能挑，不能去比标签对象。"""
+    print("\n[15] 等长容器与章节标题")
+    from novel_dl.parser import GenericParser, chapter_title_from
+    from bs4 import BeautifulSoup
+
+    text = "他推开门，风灌进来。" * 30
+    page = ('<html><head><title>某书_第3章 雨夜-某站</title></head><body>'
+            '<div class="content"><div class="content">' + text + '</div></div>'
+            '</body></html>')
+    try:
+        title, body = GenericParser().parse_chapter(page)
+        ok = len(body) > 200
+    except TypeError as e:
+        ok, title, body = False, "", str(e)
+    check("等长容器不再抛 TypeError", ok, (title, body)[:1])
+
+    soup = BeautifulSoup('<html><head><title>某书_第3章 雨夜-某站</title></head>'
+                         '<body><h1>第3章 雨夜</h1></body></html>', "lxml")
+    check("h1 像章名时用 h1", chapter_title_from(soup) == "第3章 雨夜",
+          chapter_title_from(soup))
+
+    soup2 = BeautifulSoup('<html><head><title>某书_第7章 长夜-某站</title></head>'
+                          '<body><h1>书籍下架通知</h1></body></html>', "lxml")
+    check("h1 是站内通知时改用 <title>",
+          chapter_title_from(soup2).startswith("第7章"), chapter_title_from(soup2))
+
+    from novel_dl.textutil import body_from
+    lines = ["书名：", "间客", "作者名：", "猫腻", "本章字数：", "692字",
+             "更新时间：", "2011-03-24 05:50:32",
+             "十天是一整段长情节，里面有很多我喜欢的点。",
+             "后续精彩内容，上QQ阅读APP免费读",
+             "登录订阅本章 >"]
+    body = body_from(lines)
+    check("书籍信息块被删掉", "间客" not in body and "猫腻" not in body, body)
+    check("字数/更新时间被删掉", "692字" not in body and "2011-03-24" not in body, body)
+    check("APP 推广行被删掉", "APP" not in body and "订阅" not in body, body)
+    check("正文留着", "十天是一整段长情节" in body, body)
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -635,6 +675,7 @@ def main():
     test_pager_vs_next_chapter()
     test_no_rule_needed()
     test_boilerplate()
+    test_equal_length_containers()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

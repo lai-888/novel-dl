@@ -60,8 +60,25 @@ CHAPTER_START = re.compile(r"^(第)?[0-9零一二三四五六七八九十百千]
 PAGE_MARK = re.compile(r"^[（(]\s*\d+\s*/\s*\d+\s*[)）]")
 
 
+CHAP_MARK = re.compile(r"第[0-9零一二三四五六七八九十百千万两]+[章节回话卷幕]|"
+                       r"序章|终章|尾声|后记|前言|插图|番外|短篇|间章|外传")
+
+
+def _looks_chapterish(text: str) -> bool:
+    return bool(text) and len(text) <= 60 and bool(CHAP_MARK.search(text))
+
+
 def chapter_title_from(soup, title_hint: str = "") -> str:
-    """从 <title> 里挑出章节名。h1 常常是站内通知，不能直接用。"""
+    """取章节名：先看 h1，像章节就用它；否则从 <title> 里挑。
+
+    <title> 往往是「书名_第N章 标题-站名」这种 SEO 串，h1 通常只有章名；
+    但有的站把 h1 拿去做站内通知（「书籍下架通知」），那时才轮到 <title>。
+    """
+    h = soup.find(["h1", "h2"])
+    h1 = strip_invisible(h.get_text(strip=True)) if h else ""
+    if _looks_chapterish(h1):
+        return strip_page_mark(h1)
+
     raw = soup.title.get_text(strip=True) if soup.title else ""
     best = ""
     if raw:
@@ -69,7 +86,7 @@ def chapter_title_from(soup, title_hint: str = "") -> str:
         head = CHAPTER_NOISE.split(raw)[0] or raw
         parts = [p.strip() for p in re.split(r"[_|］】]", head) if p.strip()]
         chap = [p for p in parts if not CHAPTER_NOISE.search(p)
-                and CHAPTER_START.match(p)]
+                and CHAP_MARK.search(p)]
         page = [p for p in parts if PAGE_MARK.match(p)]
         if chap:
             best = "_".join(chap + page[:1])
@@ -78,10 +95,7 @@ def chapter_title_from(soup, title_hint: str = "") -> str:
             if clean:
                 best = "_".join(clean + page[:1])
     if not best:
-        h = soup.find(["h1", "h2"])
-        txt = h.get_text(strip=True) if h else ""
-        if txt and len(txt) <= 60:
-            best = txt
+        best = h1
     return strip_page_mark(best) or (title_hint or "")
 
 
@@ -472,8 +486,10 @@ class GenericParser(BaseParser):
                 cands.append((n, el))
         if cands:
             top = max(n for n, _ in cands)
-            # 外层包裹（带工具栏、推荐位）文字更多；取仍有八成正文的最内层
-            return min((n, el) for n, el in cands if n >= top * 0.8)[1]
+            # 外层包裹（带工具栏、推荐位）文字更多；取仍有八成正文的最内层。
+            # 只能按字数比，字数相同的时候比 Tag 会直接抛 TypeError
+            return min((c for c in cands if c[0] >= top * 0.8),
+                       key=lambda c: c[0])[1]
         return self._longest_block(soup)
 
     @staticmethod

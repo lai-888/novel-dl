@@ -907,6 +907,8 @@ class Engine:
                     f.write(f"=== {head} ===\n\n")
                 else:
                     f.write(f"=== 第{i + 1}章 {head} ===\n\n")
+                if str(i) in (p.state.get("preview") or {}):
+                    f.write("（本章是付费章节，只取到开头一段）\n\n")
                 f.write(rest.strip() + "\n\n\n")
                 written += 1
         os.replace(tmp, out)   # 原子替换：崩溃不会留下半本书

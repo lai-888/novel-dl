@@ -33,6 +33,19 @@ PUA_CHARS = re.compile(r"[\ue000-\uf8ff]")
 ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\ufeff]")
 REPLACEMENT = re.compile(r"\ufffd")
 
+# 章节页顶部的书籍信息块：「书名：」「作者名：」「本章字数：」「更新时间：」各自一行，
+# 值在下一行。整行匹配标签，值靠 METADATA_LABEL 的「刚出现过标签」状态一起删。
+META_LABEL = re.compile(
+    r"^\s*(书名|书籍名称|作者|作者名|本章字数|字数|更新时间|更新|章节字数|"
+    r"Chapter\s*\w*)\s*[：:]\s*$", re.I)
+META_INLINE = re.compile(
+    r"^\s*(书名|书籍名称|作者|作者名|本章字数|字数|更新时间|章节字数)\s*[：:]", re.I)
+# 阅读器的推广行
+APP_PROMO = re.compile(
+    r"(上|打开|使用).{0,6}(APP|app|客户端).{0,12}(免费读|阅读|下载|看本书)"
+    r"|登录订阅本章|新人免费读\d+天|账号和设备都新为新人"
+    r"|后续精彩内容.{0,12}(APP|app|客户端)")
+
 INVALID_FILENAME = re.compile(r'[\\/:*?"<>|\r\n\t\x00-\x1f]')
 WIN_RESERVED = ({"CON", "PRN", "AUX", "NUL"}
                 | {f"COM{i}" for i in range(1, 10)}
@@ -136,12 +149,21 @@ def body_from(lines, *, drop_title=None) -> str:
     # 先整块删推荐位（它的标题行本身就是噪声，先过滤就认不出块了）
     cleaned = drop_recommend_blocks([ln for ln in cleaned if ln])
     kept = []
+    skip_value = False
     for ln in cleaned:
         if not ln or is_noise(ln):
             continue
         if target and _norm_title(ln) == target:
             continue
         if REDUNDANT_TITLE.match(_fold(ln)):   # 「第9章 xxx(1/2)」这类重复标题
+            continue
+        if META_LABEL.match(ln):               # 「书名：」这类标签，值在下一行
+            skip_value = True
+            continue
+        if skip_value:                         # 标签后面那一行是它的值
+            skip_value = False
+            continue
+        if META_INLINE.match(ln) or APP_PROMO.search(ln):
             continue
         kept.append(ln)
     return clean_text("\n".join(kept))
