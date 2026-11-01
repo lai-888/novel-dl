@@ -581,6 +581,45 @@ def test_no_rule_needed():
     check("章节名从 <title> 里取", title.startswith("第三卷"), title)
 
 
+def test_boilerplate():
+    """站点灌进正文的填充句要认出来去掉，作者自己的口头禅要留着。"""
+    print("\n[14] 站点填充句：按统计认，不按站点认")
+    from novel_dl.boilerplate import find_boilerplate, strip_boilerplate
+
+    filler = "不过这一切都已经不重要了"
+    fill2 = "周围的空气仿佛凝固了一般"
+    motto = "至此，请容我先行搁笔"
+
+    bodies = []
+    for i in range(12):
+        parts = [f"这是第{i}章的故事，主角在雨里走。"]
+        if i % 2 == 0:
+            parts.append(f"{filler}。{fill2}。")
+            parts.append(f"{filler}。")
+            parts.append(f"{fill2}。")
+        if i % 4 == 0:
+            parts.append(motto + "。")
+        bodies.append("\n".join(parts))
+
+    bad = find_boilerplate(bodies)
+    check("跨章重复的填充句被认出来", filler in bad and fill2 in bad, sorted(bad))
+    check("作者每章只写一次的口头禅不被误删", motto not in bad, sorted(bad))
+
+    clean, n = strip_boilerplate(
+        f"一种无以言喻的感觉，{filler}。般开始剧烈晃动。", bad)
+    check("插在句子中间的填充句被删掉", filler not in clean, clean)
+    check("连它的句号一起删（否则断句更乱）", "不重要了。" not in clean, clean)
+    check("原句剩下的部分接在一起", clean.startswith("一种无以言喻"), clean)
+
+    check("书太短时不动手（统计不足，宁可不删）",
+          find_boilerplate(bodies[:3]) == set(), find_boilerplate(bodies[:3]))
+
+    wm = ["正文内容。" * 5 + "，全网最全免费轻小说" for _ in range(8)]
+    check("带水印词的句子即使不重复也去掉",
+          any("免费轻小说" in x for x in find_boilerplate(wm)),
+          sorted(find_boilerplate(wm)))
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -595,6 +634,7 @@ def main():
     test_autodetect_narrowing()
     test_pager_vs_next_chapter()
     test_no_rule_needed()
+    test_boilerplate()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

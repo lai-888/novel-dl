@@ -872,6 +872,20 @@ class Engine:
             log.warning("一章正文都没有，先不生成 TXT")
             return ""
         written = 0
+        # 先扫一遍全书，找出站点灌进正文的填充句
+        from .boilerplate import find_boilerplate, strip_boilerplate
+        bodies = {}
+        for i in range(total):
+            if p.is_done(i):
+                t = p.read_chapter(i)
+                if t:
+                    bodies[i] = t.partition("\n\n")[2]
+        bad = find_boilerplate(list(bodies.values()))
+        dropped = 0
+        if bad:
+            hit_ch = sum(1 for b in bodies.values() if any(x in b for x in bad))
+            log.info("🧹 站点填充句 %d 句（散布在 %d 章里），导出时去掉",
+                     len(bad), hit_ch)
         tmp = out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(f"《{title}》\n来源: {self.book_url}\n"
@@ -886,6 +900,9 @@ class Engine:
                 if not body:
                     continue
                 head, _, rest = body.partition("\n\n")
+                if bad:
+                    rest, hits = strip_boilerplate(rest, bad)
+                    dropped += hits
                 if re.match(r"^第[0-9零一二三四五六七八九十百千]+[章节回卷]", head):
                     f.write(f"=== {head} ===\n\n")
                 else:
@@ -894,6 +911,8 @@ class Engine:
                 written += 1
         os.replace(tmp, out)   # 原子替换：崩溃不会留下半本书
         log.info("📦 已合并 %d 章到 TXT：%s", written, out)
+        if dropped:
+            log.info("   顺手删掉站点填充 %d 处", dropped)
         if p.state["failed"]:
             log.warning("   ⚠ 仍有 %d 章失败，下次运行会自动重试它们。",
                         len(p.state["failed"]))
