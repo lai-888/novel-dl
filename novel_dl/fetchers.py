@@ -75,6 +75,93 @@ def list_fetchers() -> list[str]:
     return sorted(FETCHERS)
 
 
+class Breaker:
+    """连续被挡就冷却一段时间，冷却期只发一个请求，缓过来再放开。"""
+
+    STREAK = 3          # 连续几次硬失败算「被挡了」
+    BASE = 5.0          # 第一次冷却几秒
+    CAP = 60.0
+    RECOVER = 3         # 连续几次成功算缓过来
+    SLOW_GAP = 0.5      # 降速后两次请求至少隔这么久
+    CEIL = 8            # 慢慢恢复时最多放到这么大
+
+    def __init__(self, gate):
+        self._gate = gate                 # 走 fetcher.gate_wait，能响应暂停/停止
+        self._lock = threading.Lock()
+        self._streak = 0
+        self._ok = 0
+        self._until = 0.0
+        self._next_at = 0.0
+        self._limit = 1
+        self._round = 0
+        self.slow = False
+        self.cooldowns = 0
+
+    def failed(self, err=None):
+        if err is not None and not hard_failure(err):
+            return
+        with self._lock:
+            self._streak += 1
+            if self._streak < self.STREAK:
+                return
+            self._streak = 0
+            self._round += 1
+            wait = min(self.BASE * (2 ** (self._round - 1)), self.CAP)
+            self._until = time.monotonic() + wait
+            self.slow, self._ok, self._limit = True, 0, 1
+            self.cooldowns += 1
+            err_text = f"（{str(err)[:60]}）" if err else ""
+        log.warning("⏸ 连续 %d 次失败%s，停 %.1f 秒再试，期间只发一个请求",
+                    self.STREAK, err_text, wait)
+
+    def ok(self):
+        with self._lock:
+            self._streak = 0
+            if not self.slow:
+                return
+            self._ok += 1
+            if self._ok < self.RECOVER:
+                return
+            self._ok = 0
+            if self._limit >= self.CEIL:
+                self.slow, self._round = False, 0
+                recovered = True
+            else:
+                self._limit = min(self._limit * 2, self.CEIL)
+                recovered = False
+            limit = self._limit
+        log.info("▶ 连着成功，放开到 %d 个请求%s", limit,
+                 "，恢复正常" if recovered else "（慢慢来）")
+
+    def window(self, limit: int) -> int:
+        """在途请求数上限：降速期按阶梯放，恢复正常后听引擎的。"""
+        with self._lock:
+            return min(self._limit, limit) if self.slow else limit
+
+    def wait(self):
+        """冷却没过去、或者还在降速，就在这里等着（可被暂停/停止打断）。"""
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                target = max(self._until, self._next_at) if self.slow else self._until
+                remain = target - now
+                if remain <= 0:
+                    if self.slow:
+                        self._next_at = now + self.SLOW_GAP
+                    return
+            self._gate(min(remain, 0.5))
+
+
+HARD_FAILS = ("429", "403", "503", "Too Many Requests", "Connection", "timed out",
+              "Timeout", "Reset", "reset", "Max retries", "ProxyError", "10054",
+              "10061", "10065")
+
+
+def hard_failure(err) -> bool:
+    text = str(err)
+    return any(k in text for k in HARD_FAILS)
+
+
 class BaseFetcher:
     name = "base"
 
@@ -88,6 +175,7 @@ class BaseFetcher:
         self._pace_lock = threading.Lock()
         self._last_request = 0.0
         self.min_interval = 0.0        # 由引擎按 --delay 设置
+        self.breaker = Breaker(self.gate_wait)
 
     def pace(self):
         """把「相邻两次请求的最小间隔」落实到所有线程上。"""

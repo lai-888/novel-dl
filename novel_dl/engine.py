@@ -54,6 +54,7 @@ class Engine:
         self.workers = max(1, int(workers or 1))
         self.on_toc = on_toc
         self._encryption_checked = False   # 字体加密只检测一次（首章）
+        self._circuit_broken = False       # 本轮是不是被挡之后提前收工
         self.blocked = None
         self.backup_url = (backup_url or "").strip() or None
         self.backup_toc = None
@@ -436,7 +437,7 @@ class Engine:
                 log.info("   第%d章 %s: %s", no, t, why)
             if len(dead) > 20:
                 log.info("   … 其余 %d 章见 state.json", len(dead) - 20)
-            self._explain_failures(dead, len(toc))
+            self._explain_failures(dead, len(toc), force=self._circuit_broken)
         prev_n = len(p.state.get("preview") or {})
         if prev_n:
             log.warning("")
@@ -447,7 +448,7 @@ class Engine:
                         "NNNNN.txt 再跑同一条命令。")
         return self.export(title, toc)
 
-    def _explain_failures(self, dead, total):
+    def _explain_failures(self, dead, total, force=False):
         """失败时给出可执行的原因判断，而不是只说「失败」。"""
         if not dead or total <= 0:
             return
@@ -456,7 +457,7 @@ class Engine:
         banned_hint = any(k in reasons for k in
                           ("reset", "10054", "connection", "timed out",
                            "403", "429", "forbidden", "too many"))
-        if ratio >= 0.5 and banned_hint:
+        if force or (ratio >= 0.5 and banned_hint):
             log.error("")
             log.error("⚠ 大部分章节都失败了，很可能被该网站限流或临时封禁。")
             log.error("   建议：把并发降到 1、把每章间隔调大，并等十几分钟再试。")
@@ -468,9 +469,20 @@ class Engine:
             log.error("   可以试试：novel-dl <网址> --driver selenium")
 
     def _get(self, url: str, quick: bool = False) -> str:
-        """统一抓取入口：先限速，再抓。"""
+        """统一抓取入口：等冷却、限速、抓取，顺手记成败给熔断用。"""
+        br = getattr(self.fetcher, "breaker", None)
+        if br is not None:
+            br.wait()
         self.fetcher.pace()
-        return self.fetcher.fetch_compat(url, quick=quick)
+        try:
+            html = self.fetcher.fetch_compat(url, quick=quick)
+        except Exception as e:
+            if br is not None:
+                br.failed(e)
+            raise
+        if br is not None:
+            br.ok()
+        return html
 
     def _fetch_chapter(self, i, toc, quick=False):
         """抓取并解析单章。纯函数式：不改任何共享状态，供并发调用。"""
@@ -644,6 +656,7 @@ class Engine:
             except Exception as e:
                 self._record_failure(i, toc, e, dead, stats)
                 if stats["conn_fail_streak"] >= 5:
+                    self._circuit_broken = True
                     log.error("\n⛔ 连续 5 章连接失败，判定站点/线路暂时不可达，自动停止。")
                     log.error("   进度已保存：网络恢复后重跑同一命令即可续传。")
                     break
@@ -677,13 +690,18 @@ class Engine:
             except Exception:
                 pass    # 网络抖动之类：留给下面的并发批次去重试
 
+        def _win():
+            """降速期按阶梯放请求，别把并发全砸回被挡的站点。"""
+            br = getattr(self.fetcher, "breaker", None)
+            return window if br is None else br.window(window)
+
         def run_batch(indices, quick):
             """跑一批。成功的直接落盘，失败的根据 quick 决定进 retry 还是记死。"""
             queue = list(indices)
             finished = 0
             with ThreadPoolExecutor(max_workers=self.workers) as pool:
                 inflight = {}
-                while queue and len(inflight) < window:
+                while queue and len(inflight) < _win():
                     i = queue.pop(0)
                     inflight[pool.submit(self._fetch_chapter, i, toc, quick)] = i
 
@@ -709,7 +727,8 @@ class Engine:
 
                         stopping = (self.stop_event is not None
                                     and self.stop_event.is_set())
-                        if queue and not stopping and stats["conn_fail_streak"] < 5:
+                        if (queue and not stopping and stats["conn_fail_streak"] < 5
+                                and len(inflight) < _win()):
                             j = queue.pop(0)
                             inflight[pool.submit(self._fetch_chapter, j, toc, quick)] = j
 
@@ -743,14 +762,30 @@ class Engine:
                 if run_batch(batch, quick=True) != "ok":
                     break
 
+        br = getattr(self.fetcher, "breaker", None)
+        if retry and status == "ok" and br is not None and br.cooldowns:
+            log.info("🧯 中途被限流过，剩下 %d 章再一个一个补", len(retry))
+            still = []
+            for i in retry:
+                self._gate()
+                try:
+                    text, c_title, preview = self._fetch_chapter(i, toc)
+                    self._record_success(i, text, c_title, toc, stats, preview)
+                except EncryptedContent:
+                    raise
+                except Exception as e:
+                    last_error[i] = e
+                    still.append(i)
+            retry[:] = still
+
         for i in retry:                 # 试过但仍没成的章：记下真实原因，下次续传
             reason = last_error.get(i) or "重试后仍失败"
             self._record_failure(i, toc, reason, dead, stats)
 
         if status == "circuit_break":
+            self._circuit_broken = True
             log.error("\n⛔ 连续 5 章连接失败，判定站点/线路暂时不可达，自动停止。")
             log.error("   进度已保存：网络恢复后重跑同一命令即可续传。")
-            self._explain_failures(dead, len(toc))
 
         p.flush()
         return stats["done_now"], dead

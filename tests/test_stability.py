@@ -47,6 +47,78 @@ def ch_html(n):
             f'<h1>第{n}章 章{n}</h1><div id="content">{BODY}</div></body></html>')
 
 
+class ThrottleFetcher(fetchers.BaseFetcher):
+    """限流站：0.2 秒内超过 3 个请求就回 429，像真被挡住的样子。"""
+
+    name = "throttle"
+    MIN_DELAY = MAX_DELAY = 0
+    chapters = 40
+    window = 0.2
+    limit = 3
+    calls = []
+    rejected = 0
+    lock = threading.Lock()
+    _recent = []
+
+    def fetch(self, url):
+        now = time.monotonic()
+        with ThrottleFetcher.lock:
+            ThrottleFetcher.calls.append(url)
+            ThrottleFetcher._recent = [t for t in ThrottleFetcher._recent
+                                       if now - t < ThrottleFetcher.window]
+            ThrottleFetcher._recent.append(now)
+            too_fast = len(ThrottleFetcher._recent) > ThrottleFetcher.limit
+            if too_fast:
+                ThrottleFetcher.rejected += 1
+        if url == BOOK:
+            return toc_html(ThrottleFetcher.chapters)
+        if too_fast:
+            raise ConnectionError("429 Too Many Requests")
+        return ch_html(int(url.split("/")[-1].split(".")[0]))
+
+    @classmethod
+    def reset(cls, chapters=40):
+        cls.calls, cls.rejected, cls._recent = [], 0, []
+        cls.chapters = chapters
+
+
+def test_breaker():
+    """被限流时要自己收敛，而不是把并发全砸上去、最后整本判死。"""
+    print("\n[11] 运行中熔断：被挡住就降速，缓过来再放开")
+    fetchers.FETCHERS["throttle"] = ThrottleFetcher
+    old_base, old_gap = fetchers.Breaker.BASE, fetchers.Breaker.SLOW_GAP
+    fetchers.Breaker.BASE = 0.05          # 测试里把冷却压短
+    fetchers.Breaker.SLOW_GAP = 0.1
+    try:
+        ThrottleFetcher.reset()
+        out = tmpdir("breaker")
+        Engine(BOOK, driver="throttle", out_dir=out, workers=8).run()
+        p = Progress(out, BOOK)
+        check("被限流也能把整本下完", len(p.state["done"]) == 40,
+              f"完成 {len(p.state['done'])} 章")
+        fast_calls = len([u for u in ThrottleFetcher.calls if u != BOOK])
+        check("没有对每一章死磕重试", fast_calls <= 90, f"实际请求 {fast_calls} 次")
+        check("确实降过速", ThrottleFetcher.rejected > 0, "一次都没被挡，测了个寂寞")
+        shutil.rmtree(out, ignore_errors=True)
+
+        ThrottleFetcher.reset()
+        out2 = tmpdir("nobreaker")
+        old_streak = fetchers.Breaker.STREAK
+        fetchers.Breaker.STREAK = 10 ** 9      # 关掉熔断当对照组
+        try:
+            Engine(BOOK, driver="throttle", out_dir=out2, workers=8).run()
+            p2 = Progress(out2, BOOK)
+            done_nb = len(p2.state["done"])
+        finally:
+            fetchers.Breaker.STREAK = old_streak
+        check("关掉熔断后就下不完（对照组证明它真在起作用）", done_nb < 40,
+              f"没熔断也完成了 {done_nb} 章")
+        shutil.rmtree(out2, ignore_errors=True)
+    finally:
+        fetchers.Breaker.BASE, fetchers.Breaker.SLOW_GAP = old_base, old_gap
+        fetchers.FETCHERS.pop("throttle", None)
+
+
 class StabFetcher(fetchers.BaseFetcher):
     """可控假站点：可注入延迟、失败、中断。"""
     name = "stab"
@@ -404,6 +476,7 @@ def main():
     test_legacy_fetcher_signature()
     test_toc_reorder()
     test_failure_budget()
+    test_breaker()
     test_cache_naming()
     test_ledger_vs_disk()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
