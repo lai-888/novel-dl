@@ -465,6 +465,18 @@ class SeleniumFetcher(BaseFetcher):
                 pass
             self._local.driver = None
 
+    def _settle(self, driver, limit: float = 15.0):
+        """等页面加载完就往下走，别死等固定秒数（一章能省一半时间）。"""
+        t0 = time.time()
+        while time.time() - t0 < limit:
+            try:
+                if driver.execute_script("return document.readyState") == "complete":
+                    break
+            except Exception:
+                break
+            time.sleep(0.2)
+        time.sleep(min(self.WAIT_SECONDS, 1.0))
+
     def _cookie_once(self, driver, url: str):
         """cookie 要先进到域名下才能种；每个 host 只种一次。"""
         jar = parse_cookie(get_cookie())
@@ -499,7 +511,7 @@ class SeleniumFetcher(BaseFetcher):
             WebDriverWait(driver, 15).until(
                 lambda d: d.find_elements(By.CSS_SELECTOR, self.WAIT_SELECTOR))
         else:
-            time.sleep(self.WAIT_SECONDS)
+            self._settle(driver)
         html = driver.page_source
         if (self.show or self.attach) and _looks_challenged(html):
             html = self._wait_human(driver)

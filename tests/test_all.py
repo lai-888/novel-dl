@@ -498,6 +498,39 @@ def test_toc_filter_and_title():
     check("没给目录选择器时走通用推断", len(toc2) >= 8, len(toc2))
 
 
+def test_autodetect_narrowing():
+    """自动推断的目录选择器必须只留同一批章节链接，别把导航也算进去。"""
+    print("\n[11] 自动推断：目录别收进导航")
+    from novel_dl import autodetect, fetchers
+    import types
+
+    page = ('<html><head><title>某书</title></head><body>'
+            '<div id="wrap">'
+            '<a href="/">首页</a><a href="/cat/1">分类</a>'
+            + "".join(f'<a href="/book_read_77_{900+i}.html">第{i}卷 第{i}章</a>'
+                      for i in range(1, 13))
+            + '</div></body></html>')
+    ch = ('<html><head><title>某书_第1卷 第1章</title></head><body>'
+          '<h1>站内公告</h1><div id="content">'
+          + "正文内容。" * 80 + '</div></body></html>')
+
+    class FakeFetch:
+        def fetch(self, url, **kw):
+            return ch if url.endswith(".html") and "book_read" in url else page
+
+    rule = autodetect.detect("http://fake.example/book/info/77", FakeFetch())
+    check("推断出规则", bool(rule), rule)
+    if rule:
+        check("推断的正文选择器指向 #content",
+              "content" in (rule.get("ch_content") or ""), rule.get("ch_content"))
+        from novel_dl.parser import SiteRuleParser
+        _t, toc = SiteRuleParser(rule).parse_toc(page, "http://fake.example/book/info/77")
+        check("目录只剩真正的章节", len(toc) == 12, len(toc))
+        check("导航没混进目录",
+              all("首页" not in x[0] and "分类" not in x[0] for x in toc),
+              [x[0] for x in toc][:3])
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -509,6 +542,7 @@ def main():
     test_challenge_detect()
     test_user_agent()
     test_toc_filter_and_title()
+    test_autodetect_narrowing()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:
