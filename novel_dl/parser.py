@@ -103,7 +103,7 @@ SITE_NOISE = re.compile(
     r"最新章节|全文阅读|全文免费阅读|免费阅读|无弹窗|txt下载|TXT下载|精校版|"
     r"章节列表|最新章节列表|笔趣阁|顶点小说|小说网|在线无广告")
 TITLE_SEP = re.compile(r"[_|｜/／\-－―·]+")
-TITLE_TAIL = re.compile(r"(小说|全文阅读|免费阅读|最新章节|在线无广告|txt下载)+$", re.I)
+TITLE_TAIL = re.compile(r"(小说|全文阅读|免费阅读|最新章节|在线无广告|完整版在线|在线免费阅读|在线|阅读|txt下载)+$", re.I)
 
 
 def _doc_title(soup, noise_pat=None) -> str:
@@ -174,6 +174,14 @@ def chapter_title_from(soup, title_hint: str = "") -> str:
     if not best:
         best = h1
     return strip_page_mark(best) or (title_hint or "")
+
+
+UPDATE_PREFIX = re.compile(r"^(最近更新|最新更新|最新章节|最新章節|最近章节)\s*[：:]\s*")
+
+
+def strip_update_prefix(text: str) -> str:
+    """目录里「最近更新：第412章 xxx」这种提示前缀，不是章名。"""
+    return UPDATE_PREFIX.sub("", (text or "").strip())
 
 
 class SiteRuleParser(BaseParser):
@@ -349,6 +357,8 @@ class GenericParser(BaseParser):
     def clean_toc_title(text: str) -> str:
         """目录标题净化：剥离图标字体字符，并把因此残缺的「第X章」补回来。"""
         t = PUA_PAT.sub("", text).strip()
+        # 「最近更新：第412章 xxx」是更新提示，不是章名的一部分
+        t = strip_update_prefix(t)
         t = re.sub(r"^[章节回幕话卷]\s*[.、]?\s*", "", t).strip()
         t = re.sub(r"^([0-9零一二三四五六七八九十百千万两]+)([章节回幕话卷])", r"第\1\2", t)
         return t
@@ -419,7 +429,7 @@ class GenericParser(BaseParser):
         for a in soup.find_all("a", href=True):
             if a["href"].startswith(("javascript", "#")):
                 continue
-            text = a.get_text(strip=True)
+            text = strip_update_prefix(a.get_text(strip=True))
             if text and len(text) < 60 and self.TOC_LINK_PAT.search(text):
                 links.append((a, text, urljoin(base_url, a["href"])))
 
@@ -620,7 +630,7 @@ def find_full_catalog_url(html: str, base_url: str):
         href = a["href"]
         if href.startswith(("javascript", "#", "mailto")):
             continue
-        text = a.get_text(strip=True)
+        text = strip_update_prefix(a.get_text(strip=True))
         if not text or len(text) > 20:
             continue
         # 只要「目录」意思的短语，别把「第3章 章节名」这种章节链接认成目录
@@ -642,7 +652,7 @@ def find_toc_url(html: str, base_url: str):
         href = a["href"]
         if href.startswith(("javascript", "#", "mailto")):
             continue
-        text = a.get_text(strip=True)
+        text = strip_update_prefix(a.get_text(strip=True))
         if not text or len(text) > 20:
             continue
         if TOC_HINT.search(text) or TOC_HINT.search(href):
