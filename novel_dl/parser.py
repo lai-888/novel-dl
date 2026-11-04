@@ -566,7 +566,8 @@ class GenericParser(BaseParser):
         got = [norm(k) for k in keys if k]
         ratio = len(got) / max(1, len(toc))
         if len(toc) >= 3 and ratio >= 0.6:
-            if not all(a <= b for a, b in zip(got, got[1:])):
+            uniq = len({norm(k) for k in keys if k}) == len(got)
+            if uniq and not all(a <= b for a, b in zip(got, got[1:])):
                 # 有编号的按章号排；没编号的（番外/后记/公告）放到最后，
                 # 它们本来就是末尾那些内容，跟着邻居走反而会插到中间
                 numbered = sorted((i for i, k in enumerate(keys) if k),

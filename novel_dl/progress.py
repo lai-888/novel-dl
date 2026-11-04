@@ -158,6 +158,18 @@ class Progress:
 
     def set_book(self, book_url, title, toc):
         """记录目录快照，返回「新增章节索引」列表（增量下载的依据）。"""
+        # 同一章在目录里出现两次（「最新章节」块 + 正文列表）时只留一条：
+        # 同一地址就是同一章，留着会下载两遍、TXT 里也重复
+        seen, deduped = set(), []
+        for t, u in toc:
+            if u in seen:
+                continue
+            seen.add(u)
+            deduped.append((t, u))
+        if len(deduped) != len(toc):
+            log.info("目录里有 %d 条重复地址，已合并", len(toc) - len(deduped))
+        toc = deduped
+
         old_toc = self.state.get("toc") or []
         old_urls = [u for _, u in old_toc]
 

@@ -24,6 +24,7 @@ from novel_dl.guard import looks_truncated, preview_reason        # noqa: E402
 from novel_dl.parser import (GenericParser, _doc_title,           # noqa: E402
                              chapter_key_of, chapter_title_from,
                              find_full_catalog_url, find_toc_url)
+from novel_dl import fetchers, library                             # noqa: E402
 from novel_dl.progress import Progress, _slug                     # noqa: E402
 from novel_dl.textutil import body_from, safe_filename            # noqa: E402
 
@@ -272,6 +273,86 @@ def test_toc_shift():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_multi_volume():
+    print("\n[13] 多卷目录：章号重复时不能按号硬排")
+    vol = [("第一卷 第一章 上", "u1"), ("第一卷 第二章 中", "u2"),
+           ("第二卷 第一章 下", "u3"), ("第二卷 第二章 终", "u4")]
+    check("多卷重号保持原序",
+          [t for t, _ in GenericParser._reorder(vol)] == [t for t, _ in vol])
+    dup = [("第一章 一", "a"), ("第二章 二", "b"), ("第一章 又一", "c")]
+    check("跨卷重号不打乱",
+          [t for t, _ in GenericParser._reorder(dup)] == ["第一章 一", "第二章 二", "第一章 又一"])
+    uniq = [("第3章 三", "u3"), ("第1章 一", "u1"), ("第2章 二", "u2")]
+    check("无重复时照常重排",
+          [t for t, _ in GenericParser._reorder(uniq)] == ["第1章 一", "第2章 二", "第3章 三"])
+
+
+def test_deep_catalog_pagination():
+    print("\n[14] 详情页 → 完整目录 → 目录自己的第二页")
+    book = "http://deep.example/book/5/"
+
+    def catalog(page, a, b, nxt=None):
+        items = "".join(f'<dd><a href="list_{page}_{i}.html">第{i}章 标题{i}</a></dd>'
+                        for i in range(a, b + 1))
+        nav = f'<a href="list_{page}_{nxt}.html">下一页</a>' if nxt else ""
+        return f'<html><head><title>深目录</title></head><body><dl>{items}</dl>{nav}</body></html>'
+
+    class Deep(fetchers.BaseFetcher):
+        name = "fake-deep"
+        MIN_DELAY = MAX_DELAY = 0
+
+        def fetch(self, url):
+            if url.endswith("/book/5/"):
+                return ('<html><head><title>深目录</title></head><body><dl>'
+                        + "".join(f'<dd><a href="ch_{i}.html">第{i}章 最新更新</a></dd>'
+                                  for i in range(20, 25))
+                        + '</dl><a href="/book/5/all/">全部章节</a></body></html>')
+            if url.endswith("/all/"):
+                return catalog(1, 1, 5, 2)
+            if url.endswith("/all/list_1_2.html"):
+                return catalog(2, 6, 10)
+            return ('<html><head><title>第1章 标题1</title></head><body>'
+                    '<div id="content">' + "正文内容在这里，他推门进来。" * 12 + '</div></body></html>')
+
+    fetchers.FETCHERS["fake-deep"] = Deep
+    out = os.path.join(tempfile.gettempdir(), "novel-dl-tests", "deep" + uuid.uuid4().hex[:6])
+    try:
+        eng = Engine(book, driver="fake-deep", out_dir=out, workers=1, min_delay=0)
+        _t, toc = eng.refresh_toc()
+        check("完整目录的第二页也翻了", len(toc) == 10, len(toc))
+        check("相对链接按完整目录页解析",
+              all("/book/5/all/" in u for _t, u in toc), [u for _t, u in toc][:2])
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+        fetchers.FETCHERS.pop("fake-deep", None)
+
+
+def test_dedupe_and_damage():
+    print("\n[15] 目录去重与账本损坏")
+    root = os.path.join(tempfile.gettempdir(), "novel-dl-tests", "rob" + uuid.uuid4().hex[:6])
+    url = "http://r.example/book/1/"
+    try:
+        p = Progress(root, url)
+        p.set_book(url, "健壮性", [("第1章 一", "http://r.example/1.html"),
+                                   ("第1章 一", "http://r.example/1.html"),
+                                   ("第2章 二", "http://r.example/2.html")])
+        check("重复地址只留一条", len(p.state["toc"]) == 2, len(p.state["toc"]))
+
+        p.save(force=True)
+        import json as _json
+        io.open(os.path.join(p.root, "state.json"), "w", encoding="utf-8").write("{ 坏 JSON")
+        p2 = Progress(root, url)
+        check("坏账本读成空账本", isinstance(p2.state, dict) and p2.state.get("toc") == [],
+              p2.state.get("toc"))
+
+        shutil.rmtree(p2.cache_dir, ignore_errors=True)
+        p3 = Progress(root, url)
+        check("缓存目录自动重建", os.path.isdir(p3.cache_dir), p3.cache_dir)
+        check("越界读返回空", p3.read_chapter(999) is None)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -286,6 +367,9 @@ def main():
     test_toc_clustering()
     test_export_heading()
     test_toc_shift()
+    test_multi_volume()
+    test_deep_catalog_pagination()
+    test_dedupe_and_damage()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

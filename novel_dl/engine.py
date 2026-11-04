@@ -232,7 +232,7 @@ class Engine:
         try:
             html2 = self._get(alt)
             title2, toc2 = self.parser.parse_toc(html2, alt)
-            toc2 = self._extend_toc_pages(toc2, html2)
+            toc2 = self._extend_toc_pages(toc2, html2, base_url=alt)
         except (Exception, SystemExit) as e:
             log.debug("「全部章节」那一页抓不下来（%s），沿用当前目录", e)
             return toc, title
@@ -242,17 +242,18 @@ class Engine:
                  len(toc), len(toc2))
         return toc2, title or title2
 
-    def _extend_toc_pages(self, toc: list, html: str) -> list:
+    def _extend_toc_pages(self, toc: list, html: str, base_url: str | None = None) -> list:
         """目录分页：优先用分页下拉框，否则顺着「下一页」跟。"""
         from urllib.parse import urljoin
 
+        base = base_url or self.book_url
         seen = {u for _, u in toc}
-        visited = {self.book_url}
+        visited = {base}
         options = self._page_options(html)
 
         pages, page_no = [], 2
         if options:
-            pages = [urljoin(self.book_url, u) for u in options]
+            pages = [urljoin(base, u) for u in options]
             pages = [u for u in pages if u not in visited]
             if pages:
                 log.info("目录共约 %d 页，开始逐页抓取…", len(pages) + 1)
@@ -267,7 +268,7 @@ class Engine:
                     break
                 visited.add(u)
         else:
-            url, page_html = self.book_url, html
+            url, page_html = base, html
             while len(pages) < self.max_toc_pages:
                 nxt = self._next_toc_page(page_html, url)
                 if not nxt or nxt in visited:
