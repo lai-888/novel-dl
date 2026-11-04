@@ -394,6 +394,79 @@ def test_webui_bad_input():
         srv.shutdown()
 
 
+def test_fetcher_retry():
+    print("\n[17] 抓取层：404 不重试、500 会重试、429 触发熔断")
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    hits = {}
+
+    class Flaky(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            hits[self.path] = hits.get(self.path, 0) + 1
+            n = hits[self.path]
+            if self.path.startswith("/gone"):
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"nope")
+                return
+            if self.path.startswith("/flaky") and n < 3:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(b"err")
+                return
+            if self.path.startswith("/always429"):
+                self.send_response(429)
+                self.end_headers()
+                self.wfile.write(b"slow down")
+                return
+            body = b"<html><body>ok</body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Flaky)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+
+    f = fetchers.get_fetcher("requests")
+    f.MIN_DELAY = f.MAX_DELAY = 0
+    try:
+        try:
+            f.fetch(base + "/gone")
+            check("404 抛错", False)
+        except Exception:
+            check("404 抛错", True)
+        check("404 只请求一次", hits.get("/gone") == 1, hits.get("/gone"))
+
+        text = ""
+        try:
+            text = f.fetch(base + "/flaky")
+        except Exception as e:
+            text = f"失败: {e}"
+        check("临时 500 重试后成功", "ok" in str(text), str(text)[:30])
+
+        t0 = time.time()
+        try:
+            f.fetch(base + "/always429")
+            check("持续 429 最终失败", False)
+        except Exception:
+            check("持续 429 最终失败", True)
+        check("重试次数有上限", hits.get("/always429", 0) <= 8, hits.get("/always429"))
+        check("总等待可控", time.time() - t0 < 40, f"{time.time() - t0:.1f}s")
+        check("熔断器记下冷却", f.breaker.cooldowns >= 1, f.breaker.cooldowns)
+        check("冷却后窗口收敛", f.breaker.window(8) <= 2, f.breaker.window(8))
+    finally:
+        srv.shutdown()
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -412,6 +485,7 @@ def main():
     test_deep_catalog_pagination()
     test_dedupe_and_damage()
     test_webui_bad_input()
+    test_fetcher_retry()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

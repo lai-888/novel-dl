@@ -321,11 +321,13 @@ class RequestsFetcher(BaseFetcher):
                     self.polite_sleep()
                 text, used = decode_body(r.content, r.encoding or "")
                 log.debug("编码 %s -> %s", r.encoding, used)
+                self.breaker.ok()
                 diag.emit("enc", url=url[-90:], bytes=len(r.content), enc=used,
                           declared=r.encoding or "", status=r.status_code)
                 return text
             except Exception as e:
                 last_err = e
+                self.breaker.failed(e)
                 diag.emit("retry", url=url[-90:], try_no=attempt, err=str(e)[:120])
                 if "CERTIFICATE_VERIFY_FAILED" in str(e) and host not in self.insecure_hosts:
                     import urllib3
@@ -346,6 +348,9 @@ class RequestsFetcher(BaseFetcher):
 
         if quick:
             raise ConnectionError(f"请求失败: {url} ({last_err})")
+
+        if _is_gone(last_err):
+            raise ConnectionError(f"地址不存在: {url} ({last_err})")
 
         alt = requests.Session()
         alt.headers.update(self.session.headers)
