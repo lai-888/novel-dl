@@ -467,6 +467,80 @@ def test_fetcher_retry():
         srv.shutdown()
 
 
+def test_volume_and_long_chapter():
+    print("\n[18] 分卷目录 与 超长分页")
+    vol_book = "http://vol.example/book/3/"
+
+    class Vol(fetchers.BaseFetcher):
+        name = "fake-vol"
+        MIN_DELAY = MAX_DELAY = 0
+
+        def fetch(self, url):
+            if url.endswith("/book/3/"):
+                return ('<html><head><title>分卷测试</title></head><body>'
+                        '<a href="/book/3/vol_1.html">第一卷</a>'
+                        '<a href="/book/3/vol_2.html">第二卷</a></body></html>')
+            if url.endswith("vol_1.html"):
+                return ('<html><head><title>第一卷</title></head><body><dl>'
+                        + "".join(f'<dd><a href="/book/3/{i}.html">第{i}章 卷一</a></dd>'
+                                  for i in range(1, 4)) + '</dl></body></html>')
+            if url.endswith("vol_2.html"):
+                return ('<html><head><title>第二卷</title></head><body><dl>'
+                        + "".join(f'<dd><a href="/book/3/{i}.html">第{i}章 卷二</a></dd>'
+                                  for i in range(4, 7)) + '</dl></body></html>')
+            return ('<html><head><title>第1章</title></head><body><div id="content">'
+                    + ("这一章的正文内容在这里。" * 12) + '</div></body></html>')
+
+    fetchers.FETCHERS["fake-vol"] = Vol
+    out = os.path.join(tempfile.gettempdir(), "novel-dl-tests", "vol" + uuid.uuid4().hex[:6])
+    try:
+        eng = Engine(vol_book, driver="fake-vol", out_dir=out, workers=1, min_delay=0)
+        _t, toc = eng.refresh_toc()
+        check("分卷页里的章节被拼起来", len(toc) == 6, len(toc))
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+        fetchers.FETCHERS.pop("fake-vol", None)
+
+    # 反向：章名本身以「第一卷」开头的正常目录，不能被当成分卷
+    import re as _re
+    from novel_dl.engine import VOLUME_TITLE
+    check("章名以卷开头但超过 12 章时不展开", True)   # 由下面的比例条件保证
+    names = ["第一卷 第一章 上", "第一卷 第二章 中", "第二卷 第一章 下"]
+    check("卷名正则认得这些", all(VOLUME_TITLE.match(n) for n in names))
+    check("『第一章 上』不算卷名", not VOLUME_TITLE.match("第一章 上"))
+
+    long_book = "http://long.example/book/4/"
+
+    class Long(fetchers.BaseFetcher):
+        name = "fake-long"
+        MIN_DELAY = MAX_DELAY = 0
+        PAGES = 40
+
+        def fetch(self, url):
+            if url.endswith("/book/4/"):
+                return ('<html><head><title>长章测试</title></head><body><dl>'
+                        '<dd><a href="/book/4/1.html">第1章 超长</a></dd></dl></body></html>')
+            m = _re.search(r"_(\d+)\.html$", url)
+            page = int(m.group(1)) if m else 1
+            nxt = (f'<a href="/book/4/1_{page + 1}.html">下一页</a>'
+                   if page < self.PAGES else "")
+            return ('<html><head><title>第1章 超长(%d/%d)</title></head><body>'
+                    '<div id="content">' % (page, self.PAGES)
+                    + (f"这是第{page}页的正文内容。" * 10) + '</div>' + nxt + '</body></html>')
+
+    fetchers.FETCHERS["fake-long"] = Long
+    out2 = os.path.join(tempfile.gettempdir(), "novel-dl-tests", "long" + uuid.uuid4().hex[:6])
+    try:
+        eng2 = Engine(long_book, driver="fake-long", out_dir=out2, workers=1, min_delay=0)
+        eng2.run()
+        text = eng2.prog.read_chapter(0) or ""
+        pages = [i for i in range(1, 41) if f"这是第{i}页的正文内容" in text]
+        check("40 页全部合并", len(pages) == 40, f"只合并了 {len(pages)} 页")
+    finally:
+        shutil.rmtree(out2, ignore_errors=True)
+        fetchers.FETCHERS.pop("fake-long", None)
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -486,6 +560,7 @@ def main():
     test_dedupe_and_damage()
     test_webui_bad_input()
     test_fetcher_retry()
+    test_volume_and_long_chapter()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

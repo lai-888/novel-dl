@@ -24,6 +24,9 @@ CHAPTER_LIKE = re.compile(
 CHAPTER_HEADING = re.compile(
     r"^(第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回话幕卷]|chapter\s*\d+)",
     re.I)
+MAX_CHAPTER_PAGES = 60   # 一章最多接多少页（防止页面互相指来指去）
+VOLUME_TITLE = re.compile(r"^(第[0-9零一二三四五六七八九十百千]+[卷部册]|"
+                          r"[上中下]卷|卷[0-9一二三四五六七八九十]+|番外篇?)")
 MIN_FULL_TOC = 30        # 少于这么多章，就怀疑详情页只列了最新章节
 NEXT_CHAPTER_WORD = re.compile(r"下一?[章节回卷幕话]|下章|后一章|下一篇|下一话")
 PAGER_SAFE = re.compile(r"页|page|pager|next")
@@ -209,6 +212,7 @@ class Engine:
             title, toc = self.parser.parse_toc(html, self.book_url)
         toc = self._extend_toc_pages(toc, html)
         toc, title = self._maybe_full_catalog(toc, title, html)
+        toc, title = self._expand_volume_pages(toc, title, html)
         diag.emit("toc", parser=type(self.parser).__name__, title=title,
                   chapters=len(toc), url=self.book_url[-90:])
 
@@ -241,6 +245,34 @@ class Engine:
         log.info("📚 这一页只列了 %d 章，按「全部章节」翻到完整目录：%d 章",
                  len(toc), len(toc2))
         return toc2, title or title2
+
+    def _expand_volume_pages(self, toc, title, html):
+        """目录页只有「第一卷/第二卷」这类分卷链接时，进到每卷里把章节捞出来。"""
+        if not toc or len(toc) > 12:
+            return toc, title
+        names = [t for t, _ in toc]
+        if not all(VOLUME_TITLE.match(t or "") for t in names):
+            return toc, title
+        merged, seen = [], set(u for _t, u in toc)
+        got_any = False
+        for _name, vurl in toc[: self.max_toc_pages]:
+            try:
+                vhtml = self._get(vurl)
+                vtitle, vtoc = self.parser.parse_toc(vhtml, vurl)
+                vtoc = self._extend_toc_pages(vtoc, vhtml, base_url=vurl)
+            except (Exception, SystemExit) as e:
+                log.debug("分卷页抓不下来（%s）：%s", vurl[-40:], e)
+                continue
+            if len(vtoc) >= 2:
+                got_any = True
+            for t, u in vtoc:
+                if u not in seen:
+                    seen.add(u)
+                    merged.append((t, u))
+        if not got_any or len(merged) <= len(toc):
+            return toc, title
+        log.info("📚 目录按分卷展开：%d 卷 → %d 章", len(toc), len(merged))
+        return merged, title
 
     def _extend_toc_pages(self, toc: list, html: str, base_url: str | None = None) -> list:
         """目录分页：优先用分页下拉框，否则顺着「下一页」跟。"""
@@ -619,7 +651,7 @@ class Engine:
             c_title = chap_title or c_title
 
         page_url, pages = url, 1
-        while pages < 30:
+        while pages < MAX_CHAPTER_PAGES:
             nxt = self._next_page_link(html, page_url)
             if not nxt or not self._is_next_page(page_url, nxt[0]):
                 break
@@ -636,11 +668,13 @@ class Engine:
                 log.debug("下一页其实是另一章（%s ≠ %s），不接",
                           (title2 or "")[:20], (c_title or "")[:20])
                 break
-            if len(body2) < 200 or body2.strip() in body:
+            if len(body2) < 40 or body2.strip() in body:
                 log.debug("分页第 %d 页没带来新正文（%d 字），不再往下接", pages + 1, len(body2))
                 break
             pages += 1
             body += "\n" + body2
+        else:
+            log.warning("    ⚠ 这一章超过 %d 页，先收下前面这些", MAX_CHAPTER_PAGES)
 
         text = f"{c_title}\n\n{body}"
 
