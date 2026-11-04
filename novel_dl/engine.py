@@ -1,6 +1,7 @@
 """下载引擎：目录解析 → 增量对比 → 逐章抓取 → 失败记账 → 合并 TXT。"""
 import os
 import re
+from urllib.parse import urlsplit
 import time
 
 from . import diag, log
@@ -308,7 +309,8 @@ class Engine:
             # 只认页码样子的值：纯数字，或带 page/页码 参数的地址
             if re.fullmatch(r"\d{1,4}", v):
                 out.append(v)
-            elif re.search(r"(page|p|pg|页码)[=_-]?\d+", v, re.I) and len(v) < 80:
+            elif len(v) < 80 and re.search(
+                    r"(page|p|pg|页码)[=_-]?\d+|\d+(\.s?html?)?$", v, re.I):
                 out.append(v)
         return out if len(out) >= 2 else []
 
@@ -317,10 +319,13 @@ class Engine:
         """从目录页提取「下一页」链接，按当前页地址拼成绝对地址。"""
         from urllib.parse import urljoin
 
-        m = re.search(r'<a[^>]+href="([^"]+)"[^>]*>\s*下一页\s*</a>', html)
-        if not m:
-            return None
-        return urljoin(base_url or "", m.group(1))
+        # 「下一页」「下页」「下一页 >」「下一页&nbsp;」都算
+        for m in re.finditer(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, re.S):
+            text = re.sub(r"<[^>]+>", "", m.group(2))
+            text = text.replace("&gt;", "").replace("&nbsp;", " ").strip()
+            if re.match(r"^下[一]?[页頁]\s*[>»›→]*$", text) or text.startswith("下一页"):
+                return urljoin(base_url or "", m.group(1))
+        return None
 
     def _load_backup_toc(self, main_toc: list):
         """备用网址（镜像站）：尽力而为，失败不影响主流程。"""
@@ -367,7 +372,23 @@ class Engine:
         m = re.search(r"[-_](\d+)$", cn)
         base = re.sub(r"[-_]\d+$", "", cn)
         n = int(m.group(1)) if m else 1
-        return nn in (f"{base}_{n + 1}", f"{base}-{n + 1}")
+        if nn in (f"{base}_{n + 1}", f"{base}-{n + 1}"):
+            return True
+        # 网址不变、只有查询串里的页码 +1（?page=1 → ?page=2、&p=3 → &p=4）
+        try:
+            a, b = urlsplit(cur), urlsplit(nxt)
+            if (a.netloc, a.path) != (b.netloc, b.path) or not a.query or not b.query:
+                return False
+            qa = dict(re.findall(r"([^&=]+)=([^&]*)", a.query))
+            qb = dict(re.findall(r"([^&=]+)=([^&]*)", b.query))
+            diff = [k for k in set(qa) | set(qb) if qa.get(k) != qb.get(k)]
+            if len(diff) != 1:
+                return False
+            k = diff[0]
+            va, vb = qa.get(k, ""), qb.get(k, "")
+            return va.isdigit() and vb.isdigit() and int(vb) == int(va) + 1
+        except Exception:
+            return False
 
     @staticmethod
     def _next_page_link(html: str, base_url: str = ""):

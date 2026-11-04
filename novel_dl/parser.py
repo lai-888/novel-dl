@@ -49,10 +49,13 @@ def chapter_key_of(title: str):
     mv = re.search(r"第\s*(" + NUM_TOKEN + r")\s*卷", t)
     if mv:
         vol = cn2int(mv.group(1))
-    m = re.search(r"第\s*(" + NUM_TOKEN + r")\s*[章节回]", t)
+    m = re.search(r"第\s*(" + NUM_TOKEN + r")\s*[章节回话幕]", t)
     if m:
         no = cn2int(m.group(1))
         return (vol, no) if no is not None else None
+    m_en = re.search(r"\b(?:chapter|chap\.?|ch)\.?\s*(\d{1,5})\b", t, re.I)
+    if m_en:
+        return (vol, int(m_en.group(1)))
     m2 = re.match(r"^\s*(" + NUM_TOKEN + r")\s*[.、．]\s*\S", t)      # "12. 标题"
     if m2:
         no = cn2int(m2.group(1))
@@ -99,6 +102,10 @@ class BaseParser:
         return clean_text(text)
 
 
+# 「第7章 长夜-某某站」这种：末尾还有一段站名
+SITE_SUFFIX = re.compile(r"[-－―|_]\s*[^-－―|_。，,、！!？?]{1,12}$")
+
+
 SITE_NOISE = re.compile(
     r"最新章节|全文阅读|全文免费阅读|免费阅读|无弹窗|txt下载|TXT下载|精校版|"
     r"章节列表|最新章节列表|笔趣阁|顶点小说|小说网|在线无广告")
@@ -128,6 +135,7 @@ def _doc_title(soup, noise_pat=None) -> str:
         # 否则《××小说》这种正经书名会被改掉
         best = TITLE_TAIL.sub("", best)
     best = best.strip(" -_－―·，,")
+    best = SITE_SUFFIX.sub("", best)
     return best or parts[0]
 
 
@@ -171,6 +179,7 @@ def chapter_title_from(soup, title_hint: str = "") -> str:
             clean = [p for p in parts if not CHAPTER_NOISE.search(p)]
             if clean:
                 best = "_".join(clean + page[:1])
+        best = SITE_SUFFIX.sub("", best)
     if not best:
         best = h1
     return strip_page_mark(best) or (title_hint or "")
@@ -530,17 +539,15 @@ class GenericParser(BaseParser):
 
         keys = [chapter_key_of(t) for t, _ in toc]
         got = [norm(k) for k in keys if k]
-        if len(toc) >= 5 and len(got) >= int(0.9 * len(toc)):
+        ratio = len(got) / max(1, len(toc))
+        if len(toc) >= 3 and ratio >= 0.6:
             if not all(a <= b for a, b in zip(got, got[1:])):
-                # 没写章号的行（序章/番外）跟着它前面那条走，别被甩到最后
-                filled, last = [], (0, 0)
-                for k in keys:
-                    if k:
-                        last = norm(k)
-                    filled.append(last)
-                idx = list(range(len(toc)))
-                idx.sort(key=lambda i: (filled[i][0], filled[i][1], i))
-                return [toc[i] for i in idx]
+                # 有编号的按章号排；没编号的（番外/后记/公告）放到最后，
+                # 它们本来就是末尾那些内容，跟着邻居走反而会插到中间
+                numbered = sorted((i for i, k in enumerate(keys) if k),
+                                  key=lambda i: (norm(keys[i]), i))
+                loose = [i for i, k in enumerate(keys) if not k]
+                return [toc[i] for i in numbered + loose]
             return toc
         nums = []
         for _, u in toc:
@@ -593,11 +600,17 @@ class GenericParser(BaseParser):
         """找正文容器：先认常见选择器，再按 id/class 关键词取「最贴近正文」的那个。"""
         for sel in self.CONTENT_TAGS:
             try:
-                cand = soup.select_one(sel)
+                hits = soup.select(sel)
             except Exception:
                 continue
-            if cand is not None and len(cand.get_text(strip=True)) > 200:
-                return cand
+            big = [el for el in hits if len(el.get_text(strip=True)) > 200]
+            if not big:
+                continue
+            # 命中多个（外层包裹 + 内层正文）时取仍有八成正文的最内层，
+            # 否则会把「猜你喜欢」这类侧栏一起收进来
+            top = max(len(el.get_text(strip=True)) for el in big)
+            near = [el for el in big if len(el.get_text(strip=True)) >= top * 0.8]
+            return min(near, key=lambda el: len(el.get_text(strip=True)))
 
         cands = []
         for el in soup.find_all(["div", "section", "article", "td"]):
@@ -653,6 +666,8 @@ def find_full_catalog_url(html: str, base_url: str):
         # 只要「目录」意思的短语，别把「第3章 章节名」这种章节链接认成目录
         if len(text) > 12 or not re.search(r"目录|全部章节|完整|查看|章节列表", text):
             continue
+        if re.search(r"分类|排行|标签|首页|全部小说|书库|作者", text):
+            continue
         full = urljoin(base_url, href)
         if base_host and (urlsplit(full).netloc or "").lower() != base_host:
             continue
@@ -671,6 +686,8 @@ def find_toc_url(html: str, base_url: str):
             continue
         text = strip_update_prefix(a.get_text(strip=True))
         if not text or len(text) > 20:
+            continue
+        if re.search(r"分类|排行|标签|首页|全部小说|书库|作者", text):
             continue
         if TOC_HINT.search(text) or TOC_HINT.search(href):
             return urljoin(base_url, href)

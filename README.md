@@ -154,10 +154,11 @@ proxy      = "http://127.0.0.1:7890"   # 可选
 
 ## 测试
 
-`tests/` 下有 11 个断言套件，共 496 项，不依赖 pytest，不联网：
+`tests/` 下有 12 个断言套件，共 557 项，不依赖 pytest，不联网：
 
 ```bash
 python tests/test_all.py    # 单个套件
+python tests/test_generic.py # 通用算法的边界用例（章号、排序、分页、容器、清洗）
 python tests/test_diag.py   # 调试工具（状态快照、轨迹）
 python tests/bench.py       # 性能基准
 ```
