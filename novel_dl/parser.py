@@ -386,6 +386,29 @@ class GenericParser(BaseParser):
 
     QNUM = re.compile(r"\d+")
 
+    def _keep_dominant_template(self, links):
+        """页面上常有别家的章节链接（推荐位、友链）。按网址形状只留最大的那组。"""
+        if len(links) < 4:
+            return links
+        groups = {}
+        for item in links:
+            url = item[2]
+            parts = urlsplit(url)
+            segs = parts.path.split("/")
+            if segs:
+                segs[-1] = re.sub(r"\d+", "#", segs[-1])   # 只抹章号，保住书号
+            tpl = f"{parts.netloc}" + "/".join(segs)
+            if parts.query:
+                tpl += "?" + self.QNUM.sub("#", parts.query)
+            groups.setdefault(tpl, []).append(item)
+        if len(groups) <= 1:
+            return links
+        main = max(groups.values(), key=len)
+        # 主组要明显占优，否则宁可不筛（可能是同一本书的两种地址形态）
+        if len(main) >= 3 and len(main) >= 0.6 * len(links):
+            return main
+        return links
+
     def _chapter_links_by_template(self, soup, base_url):
         """网址里没有 .html、只有查询串（?bid=1&cid=2）的站：按 URL 形状聚类。"""
         groups = {}
@@ -453,6 +476,8 @@ class GenericParser(BaseParser):
             text = strip_update_prefix(a.get_text(strip=True))
             if text and len(text) < 60 and self.TOC_LINK_PAT.search(text):
                 links.append((a, text, urljoin(base_url, a["href"])))
+
+        links = self._keep_dominant_template(links)
 
         by_url, cluster_prefix = self._chapter_links_by_url(soup, base_url)
         if by_url and len(by_url) >= max(10, len(links) * 2):

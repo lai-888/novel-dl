@@ -6,7 +6,10 @@
 """
 import io
 import os
+import shutil
 import sys
+import tempfile
+import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -15,13 +18,13 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 from bs4 import BeautifulSoup                      # noqa: E402
 
 from novel_dl.encoding import decode_body, looks_garbled          # noqa: E402
-from novel_dl.engine import Engine                                # noqa: E402
+from novel_dl.engine import CHAPTER_HEADING, Engine, _same_chapter  # noqa: E402
 from novel_dl.fetchers import Breaker                             # noqa: E402
 from novel_dl.guard import looks_truncated, preview_reason        # noqa: E402
 from novel_dl.parser import (GenericParser, _doc_title,           # noqa: E402
                              chapter_key_of, chapter_title_from,
                              find_full_catalog_url, find_toc_url)
-from novel_dl.progress import _slug                               # noqa: E402
+from novel_dl.progress import Progress, _slug                     # noqa: E402
 from novel_dl.textutil import body_from, safe_filename            # noqa: E402
 
 PASS, FAIL = [], []
@@ -213,6 +216,62 @@ def test_breaker_and_naming():
     check("结尾的点去掉", safe_filename("书名...") == "书名", safe_filename("书名..."))
 
 
+def test_same_chapter_edges():
+    print("\n[10] 同一章的判定细节")
+    check("副标题差异算同章", _same_chapter("第3章", "第3章 雨夜") is True,
+          _same_chapter("第3章", "第3章 雨夜"))
+    check("页码差异算同章", _same_chapter("第3章 雨夜(1/2)", "第3章 雨夜(2/2)") is True)
+    check("上下篇不算同章", _same_chapter("第3章 上", "第3章 下") is False,
+          _same_chapter("第3章 上", "第3章 下"))
+    check("不同章不算", _same_chapter("第3章 雨夜", "第4章 清晨") is False)
+    check("空标题判不了", _same_chapter("", "第4章") is None)
+
+
+def test_toc_clustering():
+    print("\n[11] 目录聚类：别家书的章节不能混进来")
+    html = ('<body><div class="list">'
+            + "".join(f'<a href="/book/11/{i}.html">第{i}章 本书</a>' for i in range(1, 9))
+            + "".join(f'<a href="/book/22/{i}.html">第{i}章 别家</a>' for i in range(1, 5))
+            + '</div></body>')
+    _t, toc = GenericParser().parse_toc(html, "http://x.example/book/11/")
+    check("只收同一本书", all("/book/11/" in u for _t, u in toc), [u for _t, u in toc][:3])
+    check("别家章节被排除", len(toc) == 8, len(toc))
+
+
+def test_export_heading():
+    print("\n[12] 导出时的章标题判定")
+    check("第3话 认", bool(CHAPTER_HEADING.match("第3话 残响")))
+    check("Chapter 3 认", bool(CHAPTER_HEADING.match("Chapter 3 The End")))
+    check("第3节 认", bool(CHAPTER_HEADING.match("第3节 碎语")))
+    check("第12章 认", bool(CHAPTER_HEADING.match("第12章 风起")))
+    check("序章不算带号", not CHAPTER_HEADING.match("序章"))
+
+
+def test_toc_shift():
+    print("\n[12b] 目录插入新章后，完成记录要跟着移位")
+    root = os.path.join(tempfile.gettempdir(), "novel-dl-tests",
+                        "shift" + uuid.uuid4().hex[:6])
+    url = "http://shift.example/book/1/"
+    try:
+        p = Progress(root, url)
+        toc_a = [("第1章 一", "http://shift.example/book/1/1.html"),
+                 ("第2章 二", "http://shift.example/book/1/2.html"),
+                 ("第3章 三", "http://shift.example/book/1/3.html")]
+        p.set_book(url, "移位测试", toc_a)
+        for i in range(3):
+            p.write_chapter(i, f"第{i + 1}章 正文")
+            p.mark_done(i, flush=True)
+        check("先记 3 章完成", sorted(p.state["done"]) == [0, 1, 2], p.state["done"])
+
+        toc_b = [("番外 楔子", "http://shift.example/book/1/0.html")] + toc_a
+        p.set_book(url, "移位测试", toc_b)
+        check("完成记录跟着后移", sorted(p.state["done"]) == [1, 2, 3], p.state["done"])
+        check("缓存仍对新下标", "第1章 正文" in (p.read_chapter(1) or ""),
+              (p.read_chapter(1) or "")[:20])
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -223,6 +282,10 @@ def main():
     test_catalog_links()
     test_encoding_and_guard()
     test_breaker_and_naming()
+    test_same_chapter_edges()
+    test_toc_clustering()
+    test_export_heading()
+    test_toc_shift()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

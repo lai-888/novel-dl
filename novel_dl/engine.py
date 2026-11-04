@@ -21,6 +21,9 @@ CHAPTER_LIKE = re.compile(
     r"^(https?://[^/]+/(?:book|books|novel|xiaoshuo)/\d+)/\d+\.html?$")
 
 
+CHAPTER_HEADING = re.compile(
+    r"^(第\s*[0-9零一二三四五六七八九十百千万两]+\s*[章节回话幕卷]|chapter\s*\d+)",
+    re.I)
 MIN_FULL_TOC = 30        # 少于这么多章，就怀疑详情页只列了最新章节
 NEXT_CHAPTER_WORD = re.compile(r"下一?[章节回卷幕话]|下章|后一章|下一篇|下一话")
 PAGER_SAFE = re.compile(r"页|page|pager|next")
@@ -38,6 +41,10 @@ def _same_chapter(a: str, b: str):
     if not ba or not bb:
         return None
     if ba == bb:
+        return True
+    # 「第3章」和「第3章 雨夜」只是副标题有无，仍是同一章；
+    # 「第3章 上」和「第3章 下」互不为前缀，所以不会被并掉
+    if ba.startswith(bb) or bb.startswith(ba):
         return True
     return False
 
@@ -951,7 +958,7 @@ class Engine:
                 if bad:
                     rest, hits = strip_boilerplate(rest, bad)
                     dropped += hits
-                if re.match(r"^第[0-9零一二三四五六七八九十百千]+[章节回卷]", head):
+                if CHAPTER_HEADING.match(head):
                     f.write(f"=== {head} ===\n\n")
                 else:
                     f.write(f"=== 第{i + 1}章 {head} ===\n\n")
