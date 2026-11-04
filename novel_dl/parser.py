@@ -184,6 +184,13 @@ def strip_update_prefix(text: str) -> str:
     return UPDATE_PREFIX.sub("", (text or "").strip())
 
 
+def drop_inline_links(container) -> None:
+    """正文里的短链接是「猜你喜欢」这类推荐位，不是小说内容。"""
+    for a in container.find_all("a"):
+        if len(a.get_text(strip=True)) <= 20:
+            a.decompose()
+
+
 class SiteRuleParser(BaseParser):
     """按 JSON 规则解析。规则失效时自动退回通用解析器，保证「还能下」。"""
 
@@ -291,9 +298,10 @@ class SiteRuleParser(BaseParser):
         for t in container.find_all(["script", "style", "ins"]):
             t.decompose()
         self._apply_filter_tag(container, rule.get("filter_tag") or "")
+        drop_inline_links(container)
 
         lines = [ln.strip() for ln in container.get_text("\n").splitlines()]
-        body = body_from(lines)
+        body = body_from(lines, drop_title=title)
 
         for pat in (rule.get("filter_txt") or "").split("|"):
             pat = pat.strip()
@@ -306,6 +314,10 @@ class SiteRuleParser(BaseParser):
         body = clean_text(body)
 
         if len(body) < 50:
+            from .guard import filler_reason
+            why = filler_reason(container.get_text(" ", strip=True))
+            if why:
+                raise ValueError(why)
             raise ValueError("正文过短，疑似解析失败或触发了反爬")
         if js_encoded and _looks_cipher(body):
             raise RuleNeedsScript(
@@ -566,9 +578,14 @@ class GenericParser(BaseParser):
 
         for t in container.find_all(["script", "style", "ins"]):
             t.decompose()
+        drop_inline_links(container)
         lines = [ln.strip() for ln in container.get_text("\n").splitlines()]
         body = body_from(lines, drop_title=title)
         if len(body) < 50:
+            from .guard import filler_reason
+            why = filler_reason(container.get_text(" ", strip=True))
+            if why:
+                raise ValueError(why)
             raise ValueError("正文过短，疑似解析失败或触发了反爬")
         return title, body
 

@@ -707,6 +707,28 @@ def test_detail_page_and_order():
     check("正文留着", "雨点砸在铁皮雨棚上" in body, body)
 
 
+def test_recommend_links():
+    """正文容器里的短链接是推荐位；带冒号的「猜你喜欢：」也算推荐块。"""
+    print("\n[17] 推荐位：链接和标题块都要清掉")
+    from novel_dl.parser import GenericParser
+
+    page = ('<html><head><title>某书_第1章 开端</title></head><body>'
+            '<div id="content">'
+            '<a href="/book/1">公主大人等等我</a>'
+            '<a href="/book/2">伊塔之柱</a>'
+            '他推开门，风灌进来，吹得桌上的稿纸翻了一页。'
+            '他站着没动，听着走廊尽头的脚步声慢慢远去，直到彻底听不见。'
+            '</div></body></html>')
+    title, body = GenericParser().parse_chapter(page)
+    check("短链接不混进正文", "公主大人等等我" not in body and "伊塔之柱" not in body, body)
+    check("正文还在", "他推开门" in body, body)
+
+    from novel_dl.textutil import body_from
+    kept = body_from(["猜你喜欢：", "某本书甲", "某本书乙", "正文第一句。"])
+    check("带冒号的推荐块也删", "某本书甲" not in kept, kept)
+    check("推荐块后面的正文留着", "正文第一句" in kept, kept)
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -724,6 +746,7 @@ def main():
     test_boilerplate()
     test_equal_length_containers()
     test_detail_page_and_order()
+    test_recommend_links()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:
