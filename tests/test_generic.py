@@ -353,6 +353,47 @@ def test_dedupe_and_damage():
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_webui_bad_input():
+    print("\n[16] 网页界面：畸形请求不能把服务打崩")
+    import json as _json
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    import webui
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), webui.Handler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+
+    def call(path, body=None, raw=None):
+        data = raw if raw is not None else (
+            _json.dumps(body).encode() if body is not None else None)
+        req = urllib.request.Request(
+            base + path, data=data, method="POST" if data else "GET",
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+        except Exception:
+            return 0
+
+    try:
+        check("坏 JSON 给 400", call("/api/start", raw="{坏".encode("utf-8")) == 400)
+        check("缺网址给 400", call("/api/start", body={}) == 400)
+        check("不存在的书给 404", call("/api/chapter?slug=nope&no=3") == 404)
+        check("章节号非数字也不崩", call("/api/chapter?slug=&no=abc") in (400, 404))
+        check("未知路由 404", call("/nope") == 404)
+        check("打完还活着", call("/api/status") == 200)
+        b = library.find_book(tempfile.gettempdir(), "不存在的书")
+        check("找不到书时返回 None", b is None, b)
+    finally:
+        srv.shutdown()
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -370,6 +411,7 @@ def main():
     test_multi_volume()
     test_deep_catalog_pagination()
     test_dedupe_and_damage()
+    test_webui_bad_input()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

@@ -189,6 +189,26 @@ def _scan_merged(path, slug, fname) -> dict:
     }
 
 
+def find_book(root: str, slug: str):
+    """按 slug 只找那一本，别为了看一章去扫整个书架。"""
+    if not root or not slug or not os.path.isdir(root):
+        return None
+    for entry in os.listdir(root):
+        path = os.path.join(root, entry)
+        if not os.path.isdir(path):
+            continue
+        if entry != slug and not entry.endswith((f"（{slug}）", f"({slug})")):
+            continue
+        state_path = os.path.join(path, "state.json")
+        cache_dir = os.path.join(path, "cache")
+        if os.path.exists(state_path) and os.path.isdir(cache_dir):
+            return _scan_standard(path, entry, state_path, cache_dir)
+        merged = [f for f in os.listdir(path) if f.endswith(".txt")]
+        if merged:
+            return _scan_merged(path, entry, merged[0])
+    return None
+
+
 def read_chapter(book: dict, no: int) -> dict | None:
     """读取某一章的完整内容（供预览面板）。"""
     chapters = book.get("chapters") or []

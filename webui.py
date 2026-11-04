@@ -220,6 +220,19 @@ def run_task(url, from_ch, to_ch, driver, delay, backup_url=None, workers=1,
 from novel_dl.ui_page import PAGE
 
 
+def _as_int(value, default=0, lo=None, hi=None):
+    """把请求里的数字参数转成整数；转不了就用默认值，别把请求打断。"""
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    if lo is not None and n < lo:
+        n = lo
+    if hi is not None and n > hi:
+        n = hi
+    return n
+
+
 class Handler(BaseHTTPRequestHandler):
     def _host_ok(self) -> bool:
         """只接受本机地址：挡住 DNS 重绑定和任意网页发来的跨站请求。"""
@@ -290,17 +303,13 @@ class Handler(BaseHTTPRequestHandler):
         elif route == "/api/chapter":
             q = self._query()
             slug = q.get("slug", "")
-            try:
-                no = int(q.get("no", "0"))
-            except ValueError:
-                no = 0
+            no = _as_int(q.get("no"), 0, 0)
             with STATE_LOCK:
                 root = STATE.get("out_dir") or OUT_DIR
             try:
-                books = library.scan(root)
+                book = library.find_book(root, slug)
             except Exception as e:
                 return self._json(500, {"error": str(e)})
-            book = next((b for b in books if b["slug"] == slug), None)
             if not book:
                 return self._json(404, {"error": "找不到这本书"})
             data = library.read_chapter(book, no)
@@ -314,10 +323,9 @@ class Handler(BaseHTTPRequestHandler):
             with STATE_LOCK:
                 root = STATE.get("out_dir") or OUT_DIR
             try:
-                books = library.scan(root)
+                book = library.find_book(root, slug)
             except Exception:
-                books = []
-            book = next((b for b in books if b["slug"] == slug), None)
+                book = None
             if not book:
                 self._send(404, b"404", "text/plain")
                 return
@@ -419,10 +427,12 @@ class Handler(BaseHTTPRequestHandler):
             outdir = resolve_out_dir(req.get("outdir"))
         except Exception as e:
             return self._json(400, {"ok": False, "error": f"保存位置无效：{e}"})
-        started = run_task(url, req.get("from"), req.get("to"),
-                           req.get("driver") or "requests", req.get("delay") or 0,
+        started = run_task(url, _as_int(req.get("from"), None) or None,
+                           _as_int(req.get("to"), None) or None,
+                           req.get("driver") or "requests",
+                           _as_int(req.get("delay"), 0, 0, 60),
                            backup_url=(req.get("backup") or "").strip() or None,
-                           workers=int(req.get("workers") or 1),
+                           workers=_as_int(req.get("workers"), 1, 1, 32),
                            out_dir=outdir,
                            cookie=(req.get("cookie") or "").strip() or None)
         if not started:
