@@ -83,6 +83,12 @@ def register(name):
     return deco
 
 
+def _is_gone(e) -> bool:
+    """地址真的不存在（404/410），重试没有意义。"""
+    resp = getattr(e, "response", None)
+    return getattr(resp, "status_code", None) in (404, 410)
+
+
 def get_fetcher(name: str, **kw):
     if name not in FETCHERS:
         raise SystemExit(f"未知的抓取驱动: {name}，可用: {list(FETCHERS)}")
@@ -328,6 +334,9 @@ class RequestsFetcher(BaseFetcher):
                     log.warning("    ⚠ %s 的证书链不完整，只对该站点放行", host)
                     attempt -= 1
                     continue
+                # 404/410 是「这个地址不存在」，重试只是白等
+                if _is_gone(e):
+                    break
                 if attempt >= retries:
                     break
                 wait = self._backoff(attempt)

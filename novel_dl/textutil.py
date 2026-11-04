@@ -116,6 +116,34 @@ def is_noise(line: str) -> bool:
     return bool(inner and NAV_JUNK.match(inner.group(1)))
 
 
+# 贴在正文里的站内水印（整行匹配挡不住，得从行里抠掉）
+INLINE_JUNK = re.compile(
+    r"一秒记住【[^】]*】[^！!。\n]{0,40}[！!。]?"
+    r"|请记住本站[^。\n]{0,40}。?"
+    r"|本站[^。\n]{0,12}域名[:：]\s*[^，,。\s]{0,40}[。，,]?"
+    r"|记住本站[^。\n]{0,20}。?"
+    r"|手机用户请浏览[^。\n]{0,30}。?"
+    r"|最新章节[！!]?"
+)
+
+# 章节页把标题和页码又贴了一遍：「第N章 xxx(第1/2页)」
+TITLE_THEN_MARK = re.compile(r"^(.{0,80}?)[（(]\s*第?\s*\d+\s*/\s*\d+\s*页?\s*[)）]")
+
+
+def strip_inline_junk(line: str, title: str = "") -> str:
+    """把「一秒记住【…】…无弹窗！」这类贴在水印从行里去掉。"""
+    if not line:
+        return line
+    out = INLINE_JUNK.sub("", line)
+    m = TITLE_THEN_MARK.match(out)
+    if m:
+        head = m.group(1)
+        squash = lambda x: re.sub(r"\s+", "", _norm_title(x or ""))
+        if title and squash(head).endswith(squash(title)):
+            out = out[m.end():]        # 标题+页码被重复贴了一遍，抠掉
+    return out.strip()
+
+
 def strip_page_mark(title: str) -> str:
     return _drop_matches(PAGE_MARK, title).strip()
 
@@ -151,6 +179,7 @@ def body_from(lines, *, drop_title=None) -> str:
     kept = []
     skip_value = False
     for ln in cleaned:
+        ln = strip_inline_junk(ln, target or "")
         if not ln or is_noise(ln):
             continue
         if target and _norm_title(ln) == target:

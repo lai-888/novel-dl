@@ -660,6 +660,53 @@ def test_equal_length_containers():
     check("正文留着", "十天是一整段长情节" in body, body)
 
 
+def test_detail_page_and_order():
+    """详情页只列最新章节、目录倒序、标题带逗号 —— 这三件事都得兜住。"""
+    print("\n[16] 详情页 / 目录顺序 / 书名")
+    from novel_dl.parser import (GenericParser, _doc_title, chapter_key_of,
+                                 cn2int, find_full_catalog_url)
+    from bs4 import BeautifulSoup
+
+    check("中文章号能转数字",
+          [cn2int(t) for t in ("六百一十二", "一十二", "三百", "九")]
+          == [612, 12, 300, 9], "cn2int 错")
+    check("从章名取 (卷, 章)", chapter_key_of("第一卷 第三章 相遇") == (1, 3),
+          chapter_key_of("第一卷 第三章 相遇"))
+    check("序章取不到号", chapter_key_of("序章") is None, chapter_key_of("序章"))
+
+    page = ('<html><head><title>某书小说_作者_新笔趣阁_某书最新章节</title></head>'
+            '<body><a href="/newbook/9/">全部章节目录</a>'
+            + "".join(f'<a href="/chapter/9/{900-i}.html">第{20-i}章 标题</a>'
+                      for i in range(10))
+            + "</body></html>")
+    url = "https://x.example/book/9/"
+    check("认得出「全部章节」链接",
+          find_full_catalog_url(page, url) == "https://x.example/newbook/9/",
+          find_full_catalog_url(page, url))
+
+    soup = BeautifulSoup(
+        "<html><head><title>公路求生，但我是隔壁无限流大佬小说_香菜_新笔趣阁_"
+        "公路求生，但我是隔壁无限流大佬最新章节_笔趣阁</title></head></html>", "lxml")
+    check("书名里的逗号不被切断",
+          _doc_title(soup) == "公路求生，但我是隔壁无限流大佬", _doc_title(soup))
+
+    toc = [(f"第{20-i}章 标题", f"https://x.example/chapter/9/{900-i}.html")
+           for i in range(10)]
+    ordered = GenericParser._reorder(toc)
+    check("倒序目录会被正过来", ordered[0][0].startswith("第11章"),
+          ordered[0][0])
+
+    from novel_dl.textutil import body_from
+    body = body_from([
+        "一秒记住【笔趣阁】x.com，更新快，无弹窗！",
+        "第7章 雨夜(第1/2页)",
+        "雨点砸在铁皮雨棚上。",
+    ], drop_title="第7章 雨夜")
+    check("行内水印被抠掉", "一秒记住" not in body, body)
+    check("重复的标题+页码被抠掉", "第1/2页" not in body, body)
+    check("正文留着", "雨点砸在铁皮雨棚上" in body, body)
+
+
 def main():
     test_resume_and_increment()
     test_site_rules()
@@ -676,6 +723,7 @@ def main():
     test_no_rule_needed()
     test_boilerplate()
     test_equal_length_containers()
+    test_detail_page_and_order()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

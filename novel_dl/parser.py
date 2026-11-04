@@ -8,6 +8,58 @@ from . import log
 from .rules import RuleNeedsScript, find_rule, has_script, plain_selector
 from .textutil import body_from, clean_text, strip_invisible, strip_page_mark
 
+
+CN_DIGIT = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+            "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+CN_UNIT = {"十": 10, "百": 100, "千": 1000, "万": 10000}
+NUM_TOKEN = r"[0-9零〇一二三四五六七八两十百千万]+"
+
+
+def cn2int(text: str):
+    """六百一十二 → 612；也认阿拉伯数字。认不出返回 None。"""
+    t = (text or "").strip()
+    if not t:
+        return None
+    if t.isdigit():
+        return int(t)
+    total, section, num = 0, 0, 0
+    for ch in t:
+        if ch in CN_DIGIT:
+            num = CN_DIGIT[ch]
+        elif ch in CN_UNIT:
+            unit = CN_UNIT[ch]
+            if unit == 10000:
+                section = (section + num) * unit
+                total += section
+                section = 0
+            else:
+                section += (num or 1) * unit
+            num = 0
+        else:
+            return None
+    return total + section + num
+
+
+def chapter_key_of(title: str):
+    """从章名里取 (卷号, 章号)，用来给目录排序。取不到返回 None。"""
+    t = (title or "").strip()
+    if not t:
+        return None
+    vol = None
+    mv = re.search(r"第\s*(" + NUM_TOKEN + r")\s*卷", t)
+    if mv:
+        vol = cn2int(mv.group(1))
+    m = re.search(r"第\s*(" + NUM_TOKEN + r")\s*[章节回]", t)
+    if m:
+        no = cn2int(m.group(1))
+        return (vol, no) if no is not None else None
+    m2 = re.match(r"^\s*(" + NUM_TOKEN + r")\s*[.、．]\s*\S", t)      # "12. 标题"
+    if m2:
+        no = cn2int(m2.group(1))
+        return (vol, no) if no is not None else None
+    return None
+
+
 PARSERS = {}
 
 
@@ -47,11 +99,36 @@ class BaseParser:
         return clean_text(text)
 
 
-def _doc_title(soup, noise_pat) -> str:
+SITE_NOISE = re.compile(
+    r"最新章节|全文阅读|全文免费阅读|免费阅读|无弹窗|txt下载|TXT下载|精校版|"
+    r"章节列表|最新章节列表|笔趣阁|顶点小说|小说网|在线无广告")
+TITLE_SEP = re.compile(r"[_|｜/／\-－―·]+")
+TITLE_TAIL = re.compile(r"(小说|全文阅读|免费阅读|最新章节|在线无广告|txt下载)+$", re.I)
+
+
+def _doc_title(soup, noise_pat=None) -> str:
+    """从 <title> 里取书名。
+
+    <title> 常是「书名_作者_站名_书名最新章节_站名」这种拼接，站名之前的才是书名；
+    书名里可能有逗号（「公路求生，但我是隔壁无限流大佬」），所以不能按标点切。
+    """
     raw = soup.title.get_text(strip=True) if soup.title else ""
     if not raw:
         return ""
-    return strip_invisible(noise_pat.split(raw)[0].strip())
+    raw = strip_invisible(raw)
+    m = SITE_NOISE.search(raw)
+    head = raw[:m.start()] if m else raw
+    parts = [p.strip(" 　") for p in TITLE_SEP.split(head) if p.strip(" 　")]
+    if not parts:
+        return head.strip()
+    # 站名/作者往往比书名短，取最长的一段
+    best = max(parts, key=len)
+    if m:
+        # 只有确认是 SEO 拼接串时才去掉尾巴上的「小说」「最新章节」，
+        # 否则《××小说》这种正经书名会被改掉
+        best = TITLE_TAIL.sub("", best)
+    best = best.strip(" -_－―·，,")
+    return best or parts[0]
 
 
 CHAPTER_NOISE = re.compile(r"最新章节|免费阅读|无弹窗|笔趣阁|小说网|全文阅读|"
@@ -420,7 +497,29 @@ class GenericParser(BaseParser):
 
     @staticmethod
     def _reorder(toc: list[tuple[str, str]]) -> list[tuple[str, str]]:
-        """目录常是「最新章节(倒序) + 正文列表(正序)」拼接，也可能整体倒序。"""
+        """目录常是「最新章节(倒序) + 正文列表(正序)」拼接，也可能整体倒序。
+
+        先按章名里的章号排（最可靠）；章名里没有号，才退回看网址里的数字。
+        """
+        def norm(k):
+            """(None, 12) 和 (1, 3) 要能比，卷号缺省按 0 算。"""
+            vol, no = k
+            return (vol or 0, no)
+
+        keys = [chapter_key_of(t) for t, _ in toc]
+        got = [norm(k) for k in keys if k]
+        if len(toc) >= 5 and len(got) >= int(0.9 * len(toc)):
+            if not all(a <= b for a, b in zip(got, got[1:])):
+                # 没写章号的行（序章/番外）跟着它前面那条走，别被甩到最后
+                filled, last = [], (0, 0)
+                for k in keys:
+                    if k:
+                        last = norm(k)
+                    filled.append(last)
+                idx = list(range(len(toc)))
+                idx.sort(key=lambda i: (filled[i][0], filled[i][1], i))
+                return [toc[i] for i in idx]
+            return toc
         nums = []
         for _, u in toc:
             m = re.search(r"(\d+)\.html?$", u) or re.search(r"/(\d+)/?$", u)
@@ -506,6 +605,34 @@ class GenericParser(BaseParser):
 
 
 TOC_HINT = re.compile(r"目录|章节目录|全部章节|返回目录|章节列表|catalog|index", re.I)
+
+
+FULL_TOC_HINT = re.compile(
+    r"全部章?节?目录|全部章节|完整目录|查看目录|全部目录|章节目录|章节列表|"
+    r"catalog|index", re.I)
+
+
+def find_full_catalog_url(html: str, base_url: str):
+    """详情页常常只列「最新章节」，完整目录在另一个链接上。"""
+    soup = BeautifulSoup(html, "lxml")
+    base_host = (urlsplit(base_url).netloc or "").lower()
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if href.startswith(("javascript", "#", "mailto")):
+            continue
+        text = a.get_text(strip=True)
+        if not text or len(text) > 20:
+            continue
+        # 只要「目录」意思的短语，别把「第3章 章节名」这种章节链接认成目录
+        if len(text) > 12 or not re.search(r"目录|全部章节|完整|查看|章节列表", text):
+            continue
+        full = urljoin(base_url, href)
+        if base_host and (urlsplit(full).netloc or "").lower() != base_host:
+            continue
+        if full.split("#")[0].rstrip("/") == base_url.split("#")[0].rstrip("/"):
+            continue
+        return full
+    return None
 
 
 def find_toc_url(html: str, base_url: str):

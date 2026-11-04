@@ -6,7 +6,7 @@ import time
 from . import diag, log
 from .fetchers import get_fetcher
 from .guard import EncryptedContent, captcha_reason, probe_reason
-from .parser import find_toc_url, get_parser
+from .parser import find_full_catalog_url, find_toc_url, get_parser
 from .progress import Progress
 from .rules import apply_url_fixes, find_rule
 from .textutil import body_from, safe_filename
@@ -20,6 +20,7 @@ CHAPTER_LIKE = re.compile(
     r"^(https?://[^/]+/(?:book|books|novel|xiaoshuo)/\d+)/\d+\.html?$")
 
 
+MIN_FULL_TOC = 30        # 少于这么多章，就怀疑详情页只列了最新章节
 NEXT_CHAPTER_WORD = re.compile(r"下一?[章节回卷幕话]|下章|后一章|下一篇|下一话")
 PAGER_SAFE = re.compile(r"页|page|pager|next")
 
@@ -199,6 +200,7 @@ class Engine:
             self.book_url = alt
             title, toc = self.parser.parse_toc(html, self.book_url)
         toc = self._extend_toc_pages(toc, html)
+        toc, title = self._maybe_full_catalog(toc, title, html)
         diag.emit("toc", parser=type(self.parser).__name__, title=title,
                   chapters=len(toc), url=self.book_url[-90:])
 
@@ -211,6 +213,26 @@ class Engine:
         if self.backup_url:
             self._load_backup_toc(toc)
         return title, toc
+
+    def _maybe_full_catalog(self, toc, title, html):
+        """详情页只列「最新章节」时，翻到它给的「全部章节」那一页。"""
+        if len(toc) >= MIN_FULL_TOC:
+            return toc, title
+        alt = find_full_catalog_url(html, self.book_url)
+        if not alt:
+            return toc, title
+        try:
+            html2 = self._get(alt)
+            title2, toc2 = self.parser.parse_toc(html2, alt)
+            toc2 = self._extend_toc_pages(toc2, html2)
+        except (Exception, SystemExit) as e:
+            log.debug("「全部章节」那一页抓不下来（%s），沿用当前目录", e)
+            return toc, title
+        if len(toc2) <= len(toc):
+            return toc, title
+        log.info("📚 这一页只列了 %d 章，按「全部章节」翻到完整目录：%d 章",
+                 len(toc), len(toc2))
+        return toc2, title or title2
 
     def _extend_toc_pages(self, toc: list, html: str) -> list:
         """目录分页：优先用分页下拉框，否则顺着「下一页」跟。"""
@@ -281,12 +303,14 @@ class Engine:
         out = []
         for value in re.findall(r'<option[^>]+value="([^"]+)"', html):
             v = value.strip()
-            if not v or v == "/":
+            if not v or v == "/" or v in out:
                 continue
-            if "/" in v.strip("/"):          # 带路径的是章节地址，不是页码
-                continue
-            out.append(v)
-        return out
+            # 只认页码样子的值：纯数字，或带 page/页码 参数的地址
+            if re.fullmatch(r"\d{1,4}", v):
+                out.append(v)
+            elif re.search(r"(page|p|pg|页码)[=_-]?\d+", v, re.I) and len(v) < 80:
+                out.append(v)
+        return out if len(out) >= 2 else []
 
     @staticmethod
     def _next_toc_page(html: str, base_url: str = ""):
