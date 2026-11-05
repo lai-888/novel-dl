@@ -104,7 +104,10 @@ def detect_font_encryption(html: str, text: str) -> float:
 
 # ---------- 付费章节：只拿到「免费预览」 ----------
 PAYWALL_FLAG = re.compile(r"""isfree["']?\s*[:=]\s*false""", re.I)
-PAYWALL_WORDS = ("购买本章", "余额不足", "订阅本章", "付费章节")
+PAYWALL_WORDS = ("购买本章", "余额不足", "订阅本章", "付费章节",
+                 "需要登录才能继续阅读", "登录后才能阅读", "本章需要登录",
+                 "登录后阅读全文", "点击获取下一章", "开通会员后阅读",
+                 "订阅后阅读", "本章为付费章节")
 PREVIEW_MAX = 400
 
 FILLER_PATTERNS = ("正在手打中", "手打中", "请稍等片刻", "内容更新后",

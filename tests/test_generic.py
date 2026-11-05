@@ -634,6 +634,19 @@ def test_latest_first_and_truncated_titles():
     check("正文留着", "七月的十二点多" in body, body)
 
 
+def test_paywall_preview():
+    print("\n[23] 登录墙：标成预览，别当成完整正文")
+    html = ('<html><body><div id="content">他推开门，风灌进来，'
+            '落地窗外是云城的夜景...... 本章需要登录才能继续阅读。 点击获取下一章'
+            '</div></body></html>')
+    text = "第101章 标题\n\n" + "他推开门，风灌进来，落地窗外是云城的夜景。"
+    why = preview_reason(html, text)
+    check("认得「需要登录才能继续阅读」", bool(why) and "预览" in why, why)
+    ok = ('<html><body><div id="content">' + "他推开门，风灌进来。" * 80
+          + '</div></body></html>')
+    check("完整章节不会被标成预览", preview_reason(ok, "正文" * 400) is None)
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -658,6 +671,7 @@ def main():
     test_short_complete_chapter()
     test_image_chapter()
     test_latest_first_and_truncated_titles()
+    test_paywall_preview()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:
