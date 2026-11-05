@@ -541,6 +541,64 @@ def test_volume_and_long_chapter():
         fetchers.FETCHERS.pop("fake-long", None)
 
 
+def test_false_positives():
+    print("\n[19] 别把真内容当成异常")
+    from novel_dl.guard import filler_reason
+
+    real = "“请稍等片刻，我去查一下。”客服小姐说完，转身走进了里间。" * 8
+    check("正文里的「请稍等片刻」不算占位页", filler_reason(real) is None,
+          filler_reason(real))
+    real2 = "“正在手打中”这四个字，后来成了他们之间的一个梗。" * 8
+    check("引用「正在手打中」也不算", filler_reason(real2) is None, filler_reason(real2))
+    check("真的占位页认得",
+          filler_reason("正在手打中，请稍等片刻，内容更新后，请重新刷新页面。") is not None)
+
+    check("Big5 声明时能解",
+          decode_body("第一章 風起".encode("big5"), "big5")[0] == "第一章 風起")
+    check("Big5 未声明也能猜",
+          "風起" in decode_body("第一章 風起".encode("big5"), "")[0])
+
+    check("相邻重复段落只留一份",
+          body_from(["他推开门，风灌进来。", "他推开门，风灌进来。",
+                     "她把伞收起来。"]).count("他推开门") == 1)
+    check("隔开的重复段落保留",
+          body_from(["他推开门。", "她把伞收起来。", "他推开门。"]).count("他推开门") == 2)
+    check("空正文算截断", looks_truncated("") is True)
+
+
+def test_short_complete_chapter():
+    print("\n[20] 短但完整的章节不该被判死")
+    book = "http://tiny.example/book/6/"
+
+    class Tiny(fetchers.BaseFetcher):
+        name = "fake-tiny"
+        MIN_DELAY = MAX_DELAY = 0
+
+        def fetch(self, url):
+            if url.endswith("/book/6/"):
+                return ('<html><head><title>短章测试</title></head><body><dl>'
+                        '<dd><a href="/book/6/1.html">第1章 短</a></dd>'
+                        '<dd><a href="/book/6/2.html">第2章 碎</a></dd></dl></body></html>')
+            n = url.rsplit("/", 1)[-1].split(".")[0]
+            body = ("“走吧。”他说完，转身走出了门。" if n == "2"
+                    else "这一章的正文内容在这里，他推门进来，风灌进来。" * 12)
+            return ('<html><head><title>第%s章</title></head><body>'
+                    '<div id="content">' % n + body + '</div></body></html>')
+
+    fetchers.FETCHERS["fake-tiny"] = Tiny
+    out = os.path.join(tempfile.gettempdir(), "novel-dl-tests", "tiny" + uuid.uuid4().hex[:6])
+    try:
+        eng = Engine(book, driver="fake-tiny", out_dir=out, workers=1, min_delay=0)
+        eng.run()
+        st = eng.prog.state
+        check("一句话的完整章节没被判失败", 1 not in (st.get("failed") or []), st.get("failed"))
+        check("它的内容存下来了", "走吧" in (eng.prog.read_chapter(1) or ""),
+              (eng.prog.read_chapter(1) or "")[:16])
+    finally:
+        shutil.rmtree(out, ignore_errors=True)
+        fetchers.FETCHERS.pop("fake-tiny", None)
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -561,6 +619,8 @@ def main():
     test_webui_bad_input()
     test_fetcher_retry()
     test_volume_and_long_chapter()
+    test_false_positives()
+    test_short_complete_chapter()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

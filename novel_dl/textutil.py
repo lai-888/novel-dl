@@ -195,5 +195,8 @@ def body_from(lines, *, drop_title=None) -> str:
             continue
         if META_INLINE.match(ln) or APP_PROMO.search(ln):
             continue
+        # 紧挨着的两行一模一样，是站点重复输出的段落，留一份
+        if kept and kept[-1] == ln:
+            continue
         kept.append(ln)
     return clean_text("\n".join(kept))

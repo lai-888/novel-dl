@@ -120,15 +120,26 @@ def filler_reason(text: str):
         return None
     head = s[:800]
     for kw in FILLER_PATTERNS:
-        if kw in head:
-            return f"站点占位页（{len(s)} 字，提示「{kw}」），这一章还没生成"
+        idx = head.find(kw)
+        if idx < 0:
+            continue
+        # 关键词得是「单独一行的提示」，不能只是正文里恰好出现这几个字
+        rest = head[idx:]
+        line = rest.splitlines()[0] if rest else kw
+        if len(line.strip()) > 40:
+            continue
+        if len(s) > 600 and idx > 120:
+            continue
+        return f"站点占位页（{len(s)} 字，提示「{kw}」），这一章还没生成"
     return None
 
 
 def looks_truncated(text: str, floor: int = SHORT_CHAPTER) -> bool:
     """正文短得可疑，且结尾不像一句话说完 —— 多半只抓到了半截。"""
     s = (text or "").strip()
-    if not s or len(s) >= floor:
+    if not s:
+        return True
+    if len(s) >= floor:
         return False
     return s[-1] not in _SENTENCE_END
 

@@ -164,9 +164,15 @@ fetchers.FETCHERS["fake-short"] = ShortFetcher
 
 
 DUP_BOOK = "https://dup.example/book/9/"
-DUP_A = "杭晚把窗帘拉开一道缝，海风灌进来，咸味很重。\n"
-DUP_B = "言溯怀站在走廊尽头，指间的烟灰落了一地。\n"
-DUP_C = "天亮了，楼下有人在搬箱子，铁皮摩擦地面。\n"
+DUP_A = ("杭晚把窗帘拉开一道缝，海风灌进来，咸味很重。\n"
+         "她把窗关上，回身在桌边坐下，倒了杯凉水。\n"
+         "言溯怀没有说话，只是把烟摁灭在窗台上。\n")
+DUP_B = ("走廊尽头的灯忽明忽暗，脚步声停在了门外。\n"
+         "门把手转了一下，又松开了，像有人在犹豫。\n"
+         "她屏住呼吸，指甲掐进掌心里，直到那声音远去。\n")
+DUP_C = ("天亮了，楼下有人在搬箱子，铁皮摩擦地面。\n"
+         "阳光斜斜地打进来，把地板照成一条一条的。\n"
+         "她翻了个身，把脸埋进枕头里，不想起来。\n")
 
 
 class DupFetcher(fetchers.BaseFetcher):
@@ -184,13 +190,13 @@ class DupFetcher(fetchers.BaseFetcher):
         self.polite_sleep()
         n = int(url.split("/")[-1].split(".")[0])
         if n == 1:
-            return short_page(1, DUP_A * 30).replace("<h1>第1章</h1>", "<h1>第1章 标题1</h1>")
+            return short_page(1, DUP_A * 10).replace("<h1>第1章</h1>", "<h1>第1章 标题1</h1>")
         if n == 2:
-            return short_page(2, DUP_B * 30).replace("<h1>第2章</h1>", "<h1>第2章 标题2</h1>")
+            return short_page(2, DUP_B * 10).replace("<h1>第2章</h1>", "<h1>第2章 标题2</h1>")
         if n == 3:      # 站点错位：这一页是第 1 章的内容
-            return short_page(3, "第1章 标题1\n" + DUP_A * 30).replace(
+            return short_page(3, "第1章 标题1\n" + DUP_A * 10).replace(
                 "<h1>第3章</h1>", "<h1>第3章 标题3</h1>")
-        return short_page(4, "第2章 标题2\n" + DUP_C * 30).replace(
+        return short_page(4, "第2章 标题2\n" + DUP_C * 10).replace(
             "<h1>第4章</h1>", "<h1>第4章 标题4</h1>")
 
 fetchers.FETCHERS["fake-dup"] = DupFetcher

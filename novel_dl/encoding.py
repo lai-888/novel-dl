@@ -87,6 +87,21 @@ def _try_decode(raw: bytes, enc: str) -> str | None:
         return None
 
 
+HAN_CHAR = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _cjk_score(text: str) -> float:
+    """这段文字「像不像中文」：常用汉字占比，扣掉怪字符。"""
+    if not text:
+        return 0.0
+    sample = text[:2000]
+    n = len(sample)
+    han = len(HAN_CHAR.findall(sample))
+    pua = sum(1 for c in sample if "\ue000" <= c <= "\uf8ff")
+    ctrl = sum(1 for c in sample if ord(c) < 32 and c not in "\r\n\t")
+    return han / n - 3 * (pua + ctrl) / n
+
+
 def decode_body(raw: bytes, declared: str = "") -> tuple[str, str]:
     """把响应字节解成文本，尽最大努力不出乱码。"""
     if not raw:
@@ -109,7 +124,7 @@ def decode_body(raw: bytes, declared: str = "") -> tuple[str, str]:
     candidates.extend(FALLBACKS)
 
     seen = set()
-    first_ok = None
+    best = None                     # (分数, 文本, 编码)
     for enc in candidates:
         e = upgrade_encoding(enc)
         if not e or e in seen:
@@ -118,10 +133,16 @@ def decode_body(raw: bytes, declared: str = "") -> tuple[str, str]:
         text = _try_decode(raw, e)
         if text is None:
             continue
-        if first_ok is None:
-            first_ok = (text, e)
-        if not looks_garbled(text):
+        if looks_garbled(text):
+            continue
+        score = _cjk_score(text)
+        if best is None or score > best[0]:
+            best = (score, text, e)
+        # 已经很像中文了就直接用；否则继续找更像的候选
+        if score >= 0.3:
             return text, e
+    if best is not None:
+        return best[1], best[2]
 
     # 前面都不像话，再问一次 charset_normalizer
     guess = guess_encoding(raw)
@@ -131,10 +152,6 @@ def decode_body(raw: bytes, declared: str = "") -> tuple[str, str]:
             log.info("按 charset_normalizer 的判断用了 %s", guess)
             return text, guess
 
-    if first_ok is not None:
-        text, e = first_ok
-        log.warning("编码可能不准（最接近的是 %s），已尽力解码", e)
-        return text, e
 
     log.warning("无法确定网页编码，已用替换模式解码（可能有少量乱码）")
     return raw.decode("utf-8", errors="replace"), "utf-8/replace"

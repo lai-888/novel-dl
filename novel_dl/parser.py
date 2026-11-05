@@ -153,6 +153,19 @@ def _looks_chapterish(text: str) -> bool:
     return bool(text) and len(text) <= 60 and bool(CHAP_MARK.search(text))
 
 
+BODY_END = ("。", "！", "？", "…", "」", "』", "”", "\"", "）", ")", "】")
+
+
+def body_too_short(body: str, floor: int = 50) -> bool:
+    """正文太短就报错；但「短、而且句子是收尾的」算正常短章。"""
+    s = (body or "").strip()
+    if len(s) < 10:
+        return True
+    if len(s) < floor and not s.endswith(BODY_END):
+        return True
+    return False
+
+
 def chapter_title_from(soup, title_hint: str = "") -> str:
     """取章节名：先看 h1，像章节就用它；否则从 <title> 里挑。
 
@@ -322,7 +335,7 @@ class SiteRuleParser(BaseParser):
                 body = body.replace(pat, "")
         body = clean_text(body)
 
-        if len(body) < 50:
+        if body_too_short(body):
             from .guard import filler_reason
             why = filler_reason(container.get_text(" ", strip=True))
             if why:
@@ -614,7 +627,7 @@ class GenericParser(BaseParser):
         drop_inline_links(container)
         lines = [ln.strip() for ln in container.get_text("\n").splitlines()]
         body = body_from(lines, drop_title=title)
-        if len(body) < 50:
+        if body_too_short(body):
             from .guard import filler_reason
             why = filler_reason(container.get_text(" ", strip=True))
             if why:
