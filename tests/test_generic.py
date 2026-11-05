@@ -616,6 +616,24 @@ def test_image_chapter():
     check("单图短章不误判为图片章", IMAGE_PLACEHOLDER not in body2, body2[:30])
 
 
+def test_latest_first_and_truncated_titles():
+    print("\n[22] 最新在前 与 被截短的目录标题")
+    # 「最新 5 章倒序 + 正文正序」叠加：去重后要正序
+    toc = ([("第5章 五", "u5"), ("第4章 四", "u4"), ("第3章 三", "u3"),
+            ("第2章 二", "u2"), ("第1章 一", "u1"),
+            ("第1章 一", "u1b"), ("第2章 二", "u2b"), ("第3章 三", "u3b")])
+    got = [t for t, _ in GenericParser._reorder(toc)]
+    check("重叠的最新块被合并并正序",
+          got == ["第1章 一", "第2章 二", "第3章 三", "第4章 四", "第5章 五"], got)
+
+    from novel_dl.textutil import body_from
+    body = body_from(["第1章刚出无限流就入公路求生是不是搞错了什么(第1/2页)",
+                      "七月的十二点多，街道上的热气把视野蒸得扭曲。"],
+                     drop_title="第1章 刚出无限流就入公路求生是不是搞错")
+    check("目录标题被截短也能认出同一章", "(第1/2页)" not in body, body)
+    check("正文留着", "七月的十二点多" in body, body)
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -639,6 +657,7 @@ def main():
     test_false_positives()
     test_short_complete_chapter()
     test_image_chapter()
+    test_latest_first_and_truncated_titles()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

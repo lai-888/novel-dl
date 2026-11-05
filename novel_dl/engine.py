@@ -637,14 +637,14 @@ class Engine:
             raise RuntimeError(cr)
 
         try:
-            c_title, body = self.parser.parse_chapter(html)
+            c_title, body = self.parser.parse_chapter(html, title_hint=chap_title)
         except Exception as e_short:
             if "过短" not in str(e_short):
                 raise
             log.info("    ↺ 解析出的正文过短，再请求一次")
             html = self._get(url)
             first_html = html
-            c_title, body = self.parser.parse_chapter(html)
+            c_title, body = self.parser.parse_chapter(html, title_hint=chap_title)
 
         # 页面标题不一定是章节名（有的站直接放书名），目录里的更可信
         if not _looks_like_chapter_title(c_title):
@@ -658,7 +658,7 @@ class Engine:
             page_url = nxt[0]
             try:
                 html = self._get(page_url)
-                title2, body2 = self.parser.parse_chapter(html)
+                title2, body2 = self.parser.parse_chapter(html, title_hint=chap_title)
             except Exception as e_page:
                 # 分页的最后一页常是「未完」「请订阅」之类，取不到就算了，
                 # 不能因为这一页把整章判成失败。

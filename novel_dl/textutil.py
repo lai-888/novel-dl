@@ -140,7 +140,10 @@ def strip_inline_junk(line: str, title: str = "") -> str:
     if m:
         head = m.group(1)
         squash = lambda x: re.sub(r"\s+", "", _norm_title(x or ""))
-        if title and squash(head).endswith(squash(title)):
+        h, t = squash(head), squash(title)
+        # 目录里的标题常被截短（只有前半截），所以前缀/后缀/相等都算同一章
+        same = bool(t) and (h == t or h.startswith(t) or h.endswith(t))
+        if same:
             out = out[m.end():]        # 标题+页码被重复贴了一遍，抠掉
     return out.strip()
 

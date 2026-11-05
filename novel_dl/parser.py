@@ -149,8 +149,14 @@ CHAP_MARK = re.compile(r"第[0-9零一二三四五六七八九十百千万两]+[
                        r"序章|终章|尾声|后记|前言|插图|番外|短篇|间章|外传")
 
 
+ORDINAL_START = re.compile(r"^\s*\d{1,5}\s*[.、．:：]?\s*\S")
+
+
 def _looks_chapterish(text: str) -> bool:
-    return bool(text) and len(text) <= 60 and bool(CHAP_MARK.search(text))
+    t = (text or "").strip()
+    if not t or len(t) > 60:
+        return False
+    return bool(CHAP_MARK.search(t) or ORDINAL_START.match(t))
 
 
 BODY_END = ("。", "！", "？", "…", "」", "』", "”", "\"", "）", ")", "】")
@@ -309,7 +315,7 @@ class SiteRuleParser(BaseParser):
                 el.decompose()
 
     # ---------- 正文 ----------
-    def parse_chapter(self, html):
+    def parse_chapter(self, html, title_hint: str = ""):
         rule = self.rule
         soup = BeautifulSoup(html, "lxml")
 
@@ -318,8 +324,14 @@ class SiteRuleParser(BaseParser):
         if node:
             title = strip_page_mark(node.get_text(strip=True))
         else:
-            title = chapter_title_from(soup) or (
+            title = chapter_title_from(soup, title_hint or "") or (
                 soup.title.get_text(strip=True) if soup.title else "未知章节")
+            if title_hint:
+                book = _doc_title(soup)
+                same_as_book = bool(book) and re.sub(r"\s+", "", book) == re.sub(r"\s+", "", title)
+                if same_as_book or (not _looks_chapterish(title)
+                                    and _looks_chapterish(title_hint)):
+                    title = title_hint
 
         c_sel = plain_selector(rule.get("ch_content", ""))
         js_encoded = has_script(rule.get("ch_content", ""))
@@ -600,6 +612,17 @@ class GenericParser(BaseParser):
         ratio = len(got) / max(1, len(toc))
         if len(toc) >= 3 and ratio >= 0.6:
             uniq = len({norm(k) for k in keys if k}) == len(got)
+            # 开头一串就在递减（「最新在前」），后面又接着正序列表 —— 按章号去重再排
+            head_desc = (len(got) >= 3
+                         and all(a > b for a, b in zip(got[:3], got[1:3])))
+            if head_desc and not uniq:
+                last = {}
+                for i, k in enumerate(keys):
+                    if k:
+                        last[norm(k)] = i      # 同一章出现两次，留正文列表那条
+                idx = sorted(last.values(), key=lambda i: norm(keys[i]))
+                loose = [i for i, k in enumerate(keys) if not k]
+                return [toc[i] for i in idx + loose]
             if uniq and not all(a <= b for a, b in zip(got, got[1:])):
                 # 有编号的按章号排；没编号的（番外/后记/公告）放到最后，
                 # 它们本来就是末尾那些内容，跟着邻居走反而会插到中间
@@ -632,6 +655,12 @@ class GenericParser(BaseParser):
         soup = BeautifulSoup(html, "lxml")
 
         title = chapter_title_from(soup, title_hint or "")
+        if title_hint:
+            book = _doc_title(soup)
+            same_as_book = bool(book) and re.sub(r"\s+", "", book) == re.sub(r"\s+", "", title)
+            if same_as_book or (not _looks_chapterish(title)
+                                and _looks_chapterish(title_hint)):
+                title = title_hint      # 取成了书名，目录里的才是章名
 
         container = self._pick_container(soup)
         if container is None:
