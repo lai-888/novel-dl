@@ -599,6 +599,23 @@ def test_short_complete_chapter():
         fetchers.FETCHERS.pop("fake-tiny", None)
 
 
+def test_image_chapter():
+    print("\n[21] 图片章：留一句说明，别当成空章")
+    from novel_dl.parser import IMAGE_PLACEHOLDER
+
+    only_imgs = ('<html><head><title>第5章 插图</title></head><body><h1>第5章 插图</h1>'
+                 '<div id="content"><img src="/a.jpg"><img src="/b.jpg">'
+                 '<img src="/c.jpg"><img src="/d.jpg"></div></body></html>')
+    t, body = GenericParser().parse_chapter(only_imgs)
+    check("标题还是章名", t == "第5章 插图", t)
+    check("正文是那句说明", body == IMAGE_PLACEHOLDER, body)
+
+    one_img = ('<html><head><title>第6章 短</title></head><body><div id="content">'
+               '<img src="/a.jpg">“走吧。”他说完就出门了。</div></body></html>')
+    _t2, body2 = GenericParser().parse_chapter(one_img)
+    check("单图短章不误判为图片章", IMAGE_PLACEHOLDER not in body2, body2[:30])
+
+
 def main():
     test_chapter_numbers()
     test_reorder()
@@ -621,6 +638,7 @@ def main():
     test_volume_and_long_chapter()
     test_false_positives()
     test_short_complete_chapter()
+    test_image_chapter()
     print(f"\n{'='*46}\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for name in FAIL:

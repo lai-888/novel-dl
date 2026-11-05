@@ -166,6 +166,22 @@ def body_too_short(body: str, floor: int = 50) -> bool:
     return False
 
 
+IMAGE_PLACEHOLDER = "（本章为图片，未取到文字）"
+
+
+def looks_like_image_chapter(container, body: str, min_imgs: int = 3) -> bool:
+    """正文几乎没有字、却有一堆图片：这一章是图片（插图/漫画），不是解析失败。"""
+    if container is None:
+        return False
+    if len((body or "").strip()) >= 50:
+        return False
+    try:
+        imgs = container.find_all("img")
+    except Exception:
+        return False
+    return len(imgs) >= min_imgs
+
+
 def chapter_title_from(soup, title_hint: str = "") -> str:
     """取章节名：先看 h1，像章节就用它；否则从 <title> 里挑。
 
@@ -336,11 +352,15 @@ class SiteRuleParser(BaseParser):
         body = clean_text(body)
 
         if body_too_short(body):
-            from .guard import filler_reason
-            why = filler_reason(container.get_text(" ", strip=True))
-            if why:
-                raise ValueError(why)
-            raise ValueError("正文过短，疑似解析失败或触发了反爬")
+            if looks_like_image_chapter(container, body):
+                body = IMAGE_PLACEHOLDER      # 图片章：留一句说明，别当失败
+                lines and log.debug("这一章只有图片，已标注")
+            else:
+                from .guard import filler_reason
+                why = filler_reason(container.get_text(" ", strip=True))
+                if why:
+                    raise ValueError(why)
+                raise ValueError("正文过短，疑似解析失败或触发了反爬")
         if js_encoded and _looks_cipher(body):
             raise RuleNeedsScript(
                 "这一章的正文是脚本加密的（规则里的 @js: 解码跑不了），"
@@ -628,11 +648,15 @@ class GenericParser(BaseParser):
         lines = [ln.strip() for ln in container.get_text("\n").splitlines()]
         body = body_from(lines, drop_title=title)
         if body_too_short(body):
-            from .guard import filler_reason
-            why = filler_reason(container.get_text(" ", strip=True))
-            if why:
-                raise ValueError(why)
-            raise ValueError("正文过短，疑似解析失败或触发了反爬")
+            if looks_like_image_chapter(container, body):
+                body = IMAGE_PLACEHOLDER      # 图片章：留一句说明，别当失败
+                lines and log.debug("这一章只有图片，已标注")
+            else:
+                from .guard import filler_reason
+                why = filler_reason(container.get_text(" ", strip=True))
+                if why:
+                    raise ValueError(why)
+                raise ValueError("正文过短，疑似解析失败或触发了反爬")
         return title, body
 
     def _pick_container(self, soup):
@@ -642,7 +666,11 @@ class GenericParser(BaseParser):
                 hits = soup.select(sel)
             except Exception:
                 continue
-            big = [el for el in hits if len(el.get_text(strip=True)) > 200]
+            page_text = len(soup.get_text(strip=True))
+            big = [el for el in hits
+                   if len(el.get_text(strip=True)) > 200
+                   # 纯图片页（插图章）几乎没有文字，靠图片数量认
+                   or (page_text < 300 and len(el.find_all("img")) >= 3)]
             if not big:
                 continue
             # 命中多个（外层包裹 + 内层正文）时取仍有八成正文的最内层，
